@@ -21,7 +21,16 @@ const C = {
   vibe: 'var(--color-vibe)',
   fav: 'var(--color-fav)',
   coin: 'var(--color-coin)',
+  like: 'var(--color-like)',
 } as const
+
+/**
+ * 命中高亮的不透明度。
+ * 其余家族色用 10% 即可辨认，但点赞的家族色是纯黑（#000000），
+ * 10% 在纸白底上几乎看不出，因此单独提高一档。
+ */
+const ACTIVE_TINT = 0.1
+const ACTIVE_TINT_DARK = 0.16
 
 /** 一个互斥选项 */
 interface Opt {
@@ -53,10 +62,12 @@ interface Group {
 }
 
 function OptionRow({ opt, active, color }: { opt: Opt; active: boolean; color?: string }) {
+  // 点赞的家族色是纯黑，需要更高一点的不透明度才看得清
+  const tint = color === C.like ? ACTIVE_TINT_DARK : ACTIVE_TINT
   return (
     <div
       className="flex flex-col sm:flex-row sm:items-baseline gap-x-2 gap-y-0.5 px-2.5 py-1.5 relative"
-      style={active ? { background: `color-mix(in srgb, ${color} 10%, transparent)` } : undefined}
+      style={active ? { background: `color-mix(in srgb, ${color} ${tint * 100}%, transparent)` } : undefined}
     >
       {active ? (
         <span
@@ -153,6 +164,7 @@ function buildGroups(result?: ScoreResult): Group[] {
         { label: '硬币得点', formula: '硬币 * 修正 C' },
         {
           label: '点赞得点',
+          color: C.like,
           options: [
             { key: 'like.capped', cond: '点赞 > 硬币 * 2', formula: '硬币 * 2' },
             { key: 'like.normal', cond: '点赞 <= 硬币 * 2', formula: '点赞' },

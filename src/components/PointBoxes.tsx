@@ -42,7 +42,6 @@ interface ItemDef {
   name: string
   color: string
   value: number
-  inked?: boolean
   /** 叠加层用极低透明度填充；赞的纯黑需特殊处理 */
   overlayColor: string
 }
@@ -107,7 +106,6 @@ export function PointBoxes({ result, top, topLabel }: PointBoxesProps) {
       name: '点赞得点',
       color: COLOR.like,
       value: result.points.like,
-      inked: true,
       overlayColor: '#555555',
     },
   ]
@@ -121,10 +119,7 @@ export function PointBoxes({ result, top, topLabel }: PointBoxesProps) {
       {/* 五类得点并列（乘的哪个修正、上限多少，由右侧「完整计算逻辑」区说明） */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
         {items.map((it) => (
-          <div
-            key={it.key}
-            className={`relative overflow-hidden border border-ink px-2.5 py-2.5 ${it.inked ? 'dots-ink' : ''}`}
-          >
+          <div key={it.key} className="relative overflow-hidden border border-ink px-2.5 py-2.5">
             <div className="text-[12px] leading-tight">{it.name}</div>
             <div className="nums text-[26px] leading-none mt-2" style={{ color: it.color }}>
               {nf.format(round0(it.value))}

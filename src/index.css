@@ -35,12 +35,6 @@
 /* 抑制刷数据分支：纯色浅红底（不用斜纹，避免影响阅读）。
    实色值用 color-mix 在组件内按同一比例生成，保持与这里一致。 */
 
-/* 点赞得点用纯黑框时，靠极淡点阵纹理与其他四项区分（不反白） */
-@utility dots-ink {
-  background-image: radial-gradient(rgba(17, 17, 17, 0.14) 0.6px, transparent 0.6px);
-  background-size: 4px 4px;
-}
-
 html {
   background: var(--color-paper);
 }
