@@ -1,0 +1,10 @@
+# 统一行尾，避免 Windows 提交的 CRLF 影响 Linux CI 与构建
+# （YAML 工作流、shell 脚本、源码一律用 LF）
+* text=auto eol=lf
+
+# 二进制文件不做行尾转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

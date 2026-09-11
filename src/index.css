@@ -1,0 +1,103 @@
+@import 'tailwindcss';
+
+/* ───────────────────────────────────────────────────────────────
+   走向 A「精确的原始极简」
+   规则：1px 细边框、严格 4px 间距节奏、完全扁平（零阴影/零渐变/零圆角）、
+        单色底 + 唯一彩色来源是 5 个官方配色。
+   ─────────────────────────────────────────────────────────────── */
+
+@theme {
+  --color-paper: #fcfcfa;
+  --color-ink: #111111;
+  --color-muted: #8a8a80;
+  --color-alert: #d93025;
+
+  /* 官方配色（draft.md「官方配色」） */
+  --color-play: #fb8510; /* 播放得点 / 修正 D */
+  --color-vibe: #681a99; /* 互动得点 / 修正 A */
+  --color-fav: #2f90b1; /* 收藏得点 / 修正 B */
+  --color-coin: #e57798; /* 硬币得点 / 修正 C */
+  --color-like: #000000; /* 点赞得点 */
+
+  /* 最终得点单独用一个绿色，与五个分项配色区分开 */
+  --color-total: #1a7f37;
+
+  --font-mono: 'IBM Plex Mono', ui-monospace, Consolas, 'Microsoft YaHei', monospace;
+  --font-sans: ui-sans-serif, system-ui, 'Microsoft YaHei', sans-serif;
+}
+
+/* 数字用等宽 + tabular-nums，让分数纵向对齐 —— "精度感"最有效的一招 */
+@utility nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 抑制刷数据分支：纯色浅红底（不用斜纹，避免影响阅读）。
+   实色值用 color-mix 在组件内按同一比例生成，保持与这里一致。 */
+
+/* 点赞得点用纯黑框时，靠极淡点阵纹理与其他四项区分（不反白） */
+@utility dots-ink {
+  background-image: radial-gradient(rgba(17, 17, 17, 0.14) 0.6px, transparent 0.6px);
+  background-size: 4px 4px;
+}
+
+html {
+  background: var(--color-paper);
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 原始网页的关键词：细而锐利的边框 */
+* {
+  box-sizing: border-box;
+}
+
+/* 数字输入框去掉步进箭头，保持"字段"的干净观感 */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* 平面细边框按钮 + hover 整块反色填充（早期网页最经典的交互） */
+@utility btn-flat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-ink);
+  background: transparent;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+  transition: none;
+  user-select: none;
+}
+
+@utility btn-flat-dark {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .btn-flat:hover:not(:disabled) {
+    background: var(--color-ink);
+    color: var(--color-paper);
+  }
+  .btn-flat-dark:hover:not(:disabled) {
+    background: transparent;
+    color: var(--color-ink);
+  }
+}

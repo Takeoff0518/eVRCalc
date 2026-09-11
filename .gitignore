@@ -1,0 +1,15 @@
+node_modules
+dist
+.npmcache
+.wrangler
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# 本机 Vite 补丁的原始文件备份（见开发记录），不需入库
+.patches
+
+# 开发过程文档：需求原文与实施记录，不对外发布
+draft.md
+plan.md
