@@ -23,7 +23,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # 固定到当前 LTS。GitHub 已在弃用 Node 20 运行时，
+          # 不显式指定会随 runner 默认值漂移（曾因此触发弃用警告）。
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -39,6 +41,13 @@ jobs:
           VITE_API_BASE: https://api.tbpdt.top
         run: npm run build
 
+      # ⚠️ 前提：仓库必须先在 Settings → Pages → Source 里选 "GitHub Actions"。
+      # 否则本步骤会报 "Get Pages site failed ... Not Found"。
+      #
+      # 这里刻意**不加** enablement: true —— 官方 action 文档明确写着
+      # "This option requires a token other than GITHUB_TOKEN to be provided"，
+      # 默认的 GITHUB_TOKEN 权限不足，加了只会把 404 变成 403。
+      # 手动开启一次即可，属于一次性配置。
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

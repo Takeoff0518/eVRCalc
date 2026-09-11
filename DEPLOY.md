@@ -89,21 +89,28 @@ git push -u origin main
 > 首次推送若报错，先在 GitHub 上手动建好空仓库（**不要**勾选 README / .gitignore，
 > 否则会有冲突）。
 
-### 2. 打开 GitHub Pages 并选对来源
+### 2. ⚠️ 先启用 Pages（**必须先做，否则第一次构建就会失败**）
 
-仓库 → **Settings** → **Pages**：
+仓库 → **Settings** → **Pages** → **Build and deployment** → **Source** 选 **GitHub Actions**
+（不要选 "Deploy from a branch"）。
 
-- **Source** 选 **GitHub Actions**（不要选 "Deploy from a branch"）
-- 仓库里已放好 `.github/workflows/deploy-pages.yml`，推送到 `main` 后会自动构建部署
+**这一步不能省，也不能靠工作流自动完成。** 跳过的话第一次 Actions 运行会在
+`actions/configure-pages@v5` 处直接失败：
 
-工作流里已经把 `VITE_API_BASE: https://api.tbpdt.top` 写进构建环境。
-**如果你用了别的 Worker 子域，记得同步改这一处**（否则线上前端会去请求
-`evrc.tbpdt.top/api/...`，那个地址上没有 Worker，必然 404）。
+```
+Error: Get Pages site failed. Please verify that the repository has Pages enabled
+and configured to build using GitHub Actions, or consider exploring the `enablement`
+parameter for this action. Error: Not Found
+```
 
-也可以不用 Actions、手动部署：本地 `npm run build` 后把 `dist/` 推到一个 `gh-pages`
-分支，Pages Source 选那个分支。
+> 为什么不在工作流里加 `enablement: true` 自动开启？官方 action 文档明确写着
+> "This option requires a token other than `GITHUB_TOKEN` to be provided" ——
+> 默认的 `GITHUB_TOKEN` 权限不足，加了只会把 404 变成 403，反而更难排查。
+> 手动开启一次属于一次性配置。
 
-### 3. 配置自定义域名 evrc.tbpdt.top
+启用后，在 Actions 页面把失败的那次运行 **Re-run all jobs**，或随便推一个提交即可。
+
+### 3. 自定义域名 evrc.tbpdt.top
 
 **第一步：告诉 GitHub 这个域名**
 
