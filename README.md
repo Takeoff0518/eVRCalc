@@ -14,13 +14,14 @@
 - **五类得点**：播放 / 互动 / 收藏 / 硬币 / 点赞，逐项展示配色与明细
 - **四个修正值**（A/B/C/D）：展示原始值与「保留比例」，命中上限时标红、被重罚时箱体着色
 - **完整计算逻辑**：右侧常驻公式原文，并高亮当前**实际命中**的公式分支
-- **B 站数据自动填充**：粘贴视频链接、BV 号或 av 号即可拉取六项数据
-- **周刊排名定位**：算出当前得点在最新一期周刊中的大概位次
+- **周刊排名定位**：算出当前得点在最新一期周刊 110 条榜单中的大概位次，名次相邻的标题可点击跳转
 - **Top 1 叠加层**：以最新一期榜首为基准的对数刻度进度条，直观对比各项得点
-- **减去上期数据**：若该视频在榜，一键扣除其数据得到本期增量
 
-**网络不可用时不影响计算**——六项数据可手动填写，得点计算、修正展示、公式说明全部照常工作，
+**网络不可用时不影响计算**——六项数据手动填写，得点计算、修正展示、公式说明全部照常工作，
 联网功能会自动隐藏并给出提示。
+
+> 六项数据需在 B 站视频页手动查看后填写。为什么不自动获取，见下方
+> [「为什么没有 B 站自动填充」](#为什么没有-b-站自动填充)。
 
 ## 计分规则
 
@@ -46,6 +47,9 @@
 **关于精度**：官方发布的 `point` 是**采集窗口时点的快照**，而本工具使用当前实时数据，
 因此结果与官方值存在约 **0.1%** 的固有偏差——这是数据口径差异，不是计算误差。
 
+**关于榜单结构**：`main_rank` 是第 1~30 名，`second_rank` 是第 31~110 名，
+**两段合起来才是完整榜单**（共 110 条）。排名定位同时使用两段。
+
 ## 技术栈
 
 React 19 · TypeScript · Vite · TailwindCSS v4 · Vitest · Cloudflare Workers
@@ -57,12 +61,12 @@ React 19 · TypeScript · Vite · TailwindCSS v4 · Vitest · Cloudflare Workers
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 65 项测试
+npm test             # 62 项测试
 npm run build        # 产物在 dist/
 ```
 
-仅前端即可运行全部计算功能。若要使用联网功能，需要同时提供一个 API 代理
-（原因见下节）：
+仅前端即可运行全部计算功能。若要使用联网功能（周刊排名定位与叠加层），
+需要同时提供一个 API 代理（原因见下节）：
 
 ```bash
 npx wrangler dev --port 8787    # 终端 1
@@ -71,17 +75,30 @@ npm run dev                     # 终端 2（Vite 已配好 proxy）
 
 ## 为什么需要一个 API 代理
 
-本工具是纯静态前端，但**浏览器无法直连所需的两个 API**（均已实测确认）：
+本工具是纯静态前端，但**浏览器无法直连周刊接口**（已实测确认）：
+`www.evocalrank.com` 的 JSON 接口**从不返回 `Access-Control-Allow-Origin`**，
+浏览器会直接丢弃整个响应——即使服务端返回了 200 与完整数据，JS 侧也只能看到
+`TypeError: Failed to fetch`，连状态码都读不到。注意这与"服务端是否校验来源"无关：
+实测该服务端并不看 `Origin` 头，问题纯在浏览器侧的读取授权。
 
-- `www.evocalrank.com` 的 JSON 接口**从不返回 `Access-Control-Allow-Origin`**，
-  浏览器会直接丢弃响应
-- `api.bilibili.com` 对**非 bilibili 域名的 `Origin` 直接返回 403**，连 CORS 阶段都到不了
-
-公共 CORS 代理也全部不可用（两者都拒绝数据中心 IP）。因此需要一个同源或跨域的转发层：
-`worker/index.js` 就是这样一个约 130 行的 Cloudflare Worker，它出网时不带 `Origin`
-（正好绕开 B 站的白名单规则），并为浏览器补上 CORS 响应头。
+因此需要一个转发层：`worker/index.js` 是一个约 130 行的 Cloudflare Worker，
+它代浏览器取数并补上 CORS 响应头。它同时会把响应裁剪到前端真正需要的字段
+（`latest.json` 由 63.8 KB 降到 23.9 KB，省 63%）。
 
 部署方式见 [`DEPLOY.md`](./DEPLOY.md)。
+
+## 为什么没有 B 站自动填充
+
+六项数据需要手动填写。自动获取尝试过三种方案，全部失败：
+
+| 方案 | 结果 |
+|---|---|
+| 浏览器直连 `api.bilibili.com` | ❌ 该接口对非 bilibili 域名的 `Origin` 直接返回 **403**，连 CORS 阶段都到不了 |
+| 经 Cloudflare Worker 转发 | ❌ Worker 出网不带 `Origin` 后，得到 **412**。逐个排除请求头差异（UA / Accept-Language / Sec-Fetch-* / 完全裸请求）后确认：本机住宅 IP 请求全部 200，Worker 请求 412 —— **差别只在出口 IP**，即 WAF 拒绝数据中心 IP，换任何 Serverless 都一样 |
+| bookmarklet（在 B 站页面上同源抓取） | ⚠️ 技术上可行，但安装方式是"把一个 `javascript:` 链接拖到书签栏"，而 **React 19 出于安全会拦截 `<a href="javascript:...">`**，拖拽安装无法实现；改为手动新建书签又过于繁琐 |
+
+公共 CORS 代理也全部不可用（实测 17 个候选：超时、需 API key、已停服或被 WAF 拦截）。
+综合下来，手动填写是唯一稳定可行的方式。
 
 ## 项目结构
 
@@ -90,15 +107,19 @@ src/
   calc/score.ts          计算内核（纯函数，无网络依赖）
   calc/scale.ts          对数刻度与进度条换算
   lib/api.ts             取数层（永不抛异常 + 超时 + 降级）
-  lib/bili.ts            URL / BV / av 解析
   lib/cachedFetch.ts     周刊数据缓存（Cache Storage）
-  components/            界面组件
+  components/            界面组件（WeeklyRank 内含排名合并逻辑与测试）
   __fixtures__/          真实数据回归夹具（官网六期，共 180 条）
-worker/index.js          Cloudflare Worker 转发层
+worker/index.js          Cloudflare Worker 转发层（含响应裁剪）
+scripts/verify-trim.mjs  部署前校验裁剪字段与体积的小工具
 ```
 
 计算内核与网络完全解耦，因此可以独立测试。回归测试直接用官网六期榜单的真实数据
 断言偏差 < 1%（实测平均 0.0699%），防止公式被改坏。
+
+**一个容易踩的坑**：周刊官网把榜单切成两段存放——`main_rank` 是第 1~30 名，
+`second_rank` 是第 31~110 名，**两段合起来才是完整榜单**。只读前者会让所有得分
+都被报在 30 名以内。
 
 ## 数据来源
 
