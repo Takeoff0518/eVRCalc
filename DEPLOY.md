@@ -215,7 +215,86 @@ npx wrangler tail
 
 ---
 
-## 附一：接口与缓存
+## 附一：防刷与额度保护
+
+### 先纠正一个常见误解：CORS 不是访问控制
+
+`Access-Control-Allow-Origin` 只是**浏览器自愿遵守**的规则。爬虫用 `curl` /
+`python requests` 时完全不看这个头，照样拿到数据。实测本 Worker 对
+`Origin: null`、`Origin: https://evil.example.com` 都返回 `ACAO=*`，
+但**即使改成白名单，curl 也照样能取**。
+
+所以「只允许某个域名请求」防不住刷量，它只能阻止"别人的网页在浏览器里读我们的响应"。
+当前默认 `*` 是有意为之（见附二），换成白名单带来的防护是心理上的。
+
+同样地，检查 `Origin` / `Referer` 也是无效的 —— 这些头都能任意伪造。
+
+### 真正有效的手段
+
+**① 限流（已启用，实测有效）**
+
+`wrangler.jsonc` 里的 `ratelimits` 绑定：
+
+```jsonc
+"ratelimits": [
+  { "name": "RATE_LIMITER", "namespace_id": "1001",
+    "simple": { "limit": 30, "period": 60 } }
+]
+```
+
+**免费版可用。** 部署时会显示 `env.RATE_LIMITER (30 requests/60s)  Rate Limit`。
+实测快速连打时第 29 次请求开始返回 429，符合阈值设定。
+
+阈值取 30 次/分钟的理由：正常使用是「每次打开页面 1 个请求」，
+30 次/分钟（每 2 秒一次）对真人远远用不到，但足以挡住脚本。
+
+两个必须知道的限制（官方文档明确说明）：
+
+- 计数**按 Cloudflare 节点独立**：同一 IP 在不同节点各有额度。
+  因此它不是精确的全局限流，但能挡住绝大多数脚本。
+- `period` 只能是 10 或 60 秒。
+
+限流键用「国家 + 节点 + IP」组合。官方建议不要只按 IP 限流
+（移动网络下大量用户共用出口 IP），组合键可减轻误伤。
+
+**② 边缘缓存（已配置，但效果无法确证）**
+
+Worker 的 fetch 子请求默认**不缓存**，`cache-control` 只作用于浏览器。
+代码里已加 `cf: { cacheEverything: true, cacheTtl: <各接口 TTL> }`，
+意在让同一节点在 TTL 内只回上游一次。
+
+实测情况：
+
+- 上游该接口**不发送 `cache-control`**（只有 etag），所以不存在上游头覆盖 TTL 的问题
+- 客户端读不到 `cf-cache-status` / `age`，无法直接证明命中
+- 延迟由首访 ~1300ms 稳定到 ~750ms，有改善但不足以断定是边缘缓存
+
+也就是说**这条可能生效、也可能没有**。若你希望确证，可以在 Cloudflare 面板看图表的
+"Requests to origin" 或开启 Workers Logs 观察。
+
+**③ 可选：Bot Fight Mode**
+
+Cloudflare 面板 → Security → Bots，免费计划包含基本的 Bot Fight Mode。
+开启后会对已知爬虫特征做挑战。对本项目是可选项。
+
+### 额度会被刷光的风险有多大
+
+即使不设防，单 IP 也被限流卡在 30 次/分钟；要在一天内跑满 100,000 次请求，
+需要持续多个来源轮换。**真正被刷光时的后果也只是当天该 API 不可用**，
+前端会自动降级为纯手动计算（周刊排名区隐藏），站点不会崩。
+
+### 实时监控
+
+```bash
+npx wrangler tail
+```
+
+或在面板 → Workers → evrcalc-api → Metrics 看请求量曲线。
+同时可以观察 429 的比例来判断是否有人在刷。
+
+---
+
+## 附二：接口与缓存
 
 Worker（`https://api.tbpdt.top`）：
 
@@ -251,7 +330,7 @@ url, avid, title, point, rank, play, like, favorite, coin, comment, danmaku
 
 Cloudflare Workers 免费版 **100,000 请求/天**，本应用量级远远用不到。
 
-## 附二：可选——收紧 CORS 来源
+## 附三：可选——收紧 CORS 来源
 
 默认 `Access-Control-Allow-Origin: *`。若想只允许自己的前端域名，在
 Cloudflare 面板 → Worker → Settings → Variables 添加：
@@ -260,5 +339,6 @@ Cloudflare 面板 → Worker → Settings → Variables 添加：
 ALLOWED_ORIGIN = https://evrc.tbpdt.top
 ```
 
-注意：收紧后本地开发的 `localhost` 会被浏览器拦截，需临时把 localhost 也加入，
-或本地开发时不带该变量。
+**但请先读附一**：CORS 头只影响浏览器，挡不住用 curl 的爬虫，
+所以这一步的防护意义有限，主要是"礼仪性"的。另外收紧后本地开发的
+`localhost` 会被浏览器拦截，需临时把 localhost 也加入，或本地开发时不带该变量。
