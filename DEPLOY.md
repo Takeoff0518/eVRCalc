@@ -226,13 +226,18 @@ ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
    用 API 建的话务必带上 `"proxied": true` —— 用面板改记录类型时那个开关
    有可能被重置成灰云，那就等于直接把源站 IP 暴露出去了。
 
-4. **从外网确认回源端口真的通**（最容易被跳过、然后又白排查半天的一步）：
+4. **从外网确认回源端口真的通**（这一步最容易跳过，然后又白排查半天）：
+
+   在**另一台机器**上（手机、VPS、或任何不在这个局域网里的设备）连一下：
 
    ```bash
-   npm run port:check -- mc.tbpdt.top 9983
+   nc -vz mc.tbpdt.top 9983        # 或 telnet mc.tbpdt.top 9983
    ```
 
-   现在这条应该已经是「✓ 开放」—— 你之前就是靠它跑通 nmap 的。
+   连不上就先解决端口转发/防火墙，别急着怪 Cloudflare。
+
+   > ⚠️ 必须从**外网**测。在同一台机器或同一局域网里测会得到"通"的假象
+   > （走的是内网直连，不经过路由器与运营商）。
 
 5. **回源证书 + 让源站讲 HTTPS**（本节是本项目踩坑最多的一步）。
    面板 → **SSL/TLS → Origin Server** → **Origin Certificates** 标签 →
@@ -264,14 +269,15 @@ ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
    颁发者 `CloudFlare Origin SSL Certificate Authority`、
    SAN 为 `DNS:*.tbpdt.top, DNS:tbpdt.top`。
 
-   自检命令：
+   想确认手上的证书属于哪一类，看 SAN 就行（现代 TLS 客户端只看 SAN、不看 CN）：
 
    ```bash
-   node scripts/inspect-cert.mjs mc.tbpdt.top 9983 api2.tbpdt.top
+   openssl s_client -connect mc.tbpdt.top:9983 -servername mc.tbpdt.top </dev/null 2>/dev/null \
+     | openssl x509 -noout -subject -ext subjectAltName
    ```
 
-   要看到 SAN 里列出 `DNS:*.tbpdt.top` 与 `DNS:tbpdt.top`，
-   以及「✓ 通配符匹配 *.tbpdt.top」。
+   要看到 SAN 里列出 `DNS:*.tbpdt.top` 与 `DNS:tbpdt.top`。
+   若报 `No extensions in certificate` 或 SAN 为空，就是签错页面了。
 
    ⚠️ **不能用 Flexible**：它会让 Cloudflare 用 **http** 回源，而 http 回源时
    它会去连源站的 **80 端口** —— 你家 80 被封，直接 522。
@@ -404,9 +410,9 @@ curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest |
 打开 `https://evrc.tbpdt.top/`，确认：
 
 - [ ] 标题右侧显示「第 735 期 · 在线」
-- [ ] 排名定位区出现 110 条可比对
-- [ ] 数据输入区出现粘贴框与「取回数据」按钮
-- [ ] 点排名区相邻条目的「填入」，六项数据被填入且显示「数据获取于 …」
+- [ ] 排名定位区出现 110 条可比对，且中间的绿色分隔线标出当前位置
+- [ ] 数据输入区出现粘贴框与「获取」按钮
+- [ ] 点排名区条目的「填入」（悬停才出现），六项数据被填入且显示「数据获取于 …」
 
 ---
 
@@ -414,10 +420,10 @@ curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest |
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| 界面显示「周刊数据不可用」 | 前端够不到后端 | 按顺序查：`npm run port:check` 看端口 → `config.json` 地址对不对 → `--check` 看后端自己能否取到上游 |
-| **522，且耗时约 20 秒** | 边缘回源到了没人应答的端口 | **最常见的一个坑**。Cloudflare 默认按标准端口回源，**不会**自动用 9983。加 **Origin Rule → Destination Port = 9983**。先跑 `node scripts/check-origin-pull.mjs mc.tbpdt.top 9983` 确认源站在外面可达 |
+| 界面显示「周刊数据不可用」 | 前端够不到后端 | 按顺序查：`config.json` 里的地址对不对 → 后端 `--check` 能否取到上游 → 从外网 `nc -vz` 试回源端口 |
+| **522，且耗时约 20 秒** | 边缘回源到了没人应答的端口 | **最常见的一个坑**。Cloudflare 默认按标准端口回源，**不会**自动用 9983。加 **Origin Rule → Destination Port = 9983** |
 | 522，源站已确认可达且讲 TLS | Cloudflare 用了 http 回源（模式是 Flexible） | 改成 **Full (strict)** 并在源站启用 `tls.*` |
-| **526** | 回源证书不被接受 | 跑 `node scripts/inspect-cert.mjs mc.tbpdt.top 9983 api2.tbpdt.top` 看 SAN。**SAN 为空 = 签成了客户端证书**（Client Certificates 页面），要去 **Origin Server → Origin Certificates** 重签。其余可能：私钥与证书不配对、证书过期、`cert_file` 没用 fullchain |
+| **526** | 回源证书不被接受 | 看 SAN（见第 5 步的 openssl 命令）。**SAN 为空 = 签成了客户端证书**（Client Certificates 页面），要去 **Origin Server → Origin Certificates** 重签。其余可能：私钥与证书不配对、证书过期、`cert_file` 没用 fullchain |
 | 526 → 换证书后变 522 | 换了证书但源站没重启 / 没启用 tls | `--check` 应显示 `（HTTPS）` 与 `[OK] 证书加载正常` |
 | 525/526，SAN 也正确 | 模式与源站协议不一致 | Full (strict) 要求源站讲 TLS；Flexible 要求源站讲明文 |
 | 开橙云后源站 IP 仍暴露 | 改记录类型时橙云开关被重置成灰云 | 用 API 建记录时显式带 `"proxied": true`；建完 `dig` 确认返回的是 Cloudflare 的 IP |
@@ -425,13 +431,12 @@ curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest |
 | 浏览器报混合内容 | 后端是 http 而页面是 https | 后端启用 HTTPS（见「域名、端口与 TLS」） |
 | 后端日志里所有访客是同一个 IP | 走了 Cloudflare 代理但没配 `trusted_proxies` | 加 `trusted_proxies: ["cloudflare"]` |
 | 限流形同虚设 | 直连暴露却配了 `trusted_proxies`，IP 可被伪造 | 清空 `trusted_proxies` |
-| 源站日志出现 `TLS handshake error ... EOF` | 多半是探测工具连上就断开，不是 Cloudflare | Cloudflare 握手失败会记成别的错误，且不会带 `EOF` |
 | B 站接口一律 412 | 出口 IP 被判为机房 IP | 确认流量确实从住宅 IP 出；VPS 上无解 |
 | B 站接口偶发 5xx | 上游限流或抖动 | 正常，缓存会回吐旧数据并标 `stale` |
 | 新一期发布后仍是旧数据 | `latest_ttl` 未到 | 最多等 5 分钟；也可调小该项 |
 | 前端请求打到 `evrc.tbpdt.top/api/...` | 没读到配置 | 检查 `config.json` 是否随构建产物发布、`VITE_API_BASE` 是否为空 |
 | `Permission denied` 启动不了 | scp 不保留执行位 | `chmod +x evrcalc-server` |
-| 外网连不上但本机 curl 正常 | 监听绑了 `127.0.0.1` | 改成 `":8443"`（绑所有网卡） |
+| 外网连不上但本机 curl 正常 | 监听绑了 `127.0.0.1` | 改成 `":9983"`（绑所有网卡） |
 
 查看后端日志：
 

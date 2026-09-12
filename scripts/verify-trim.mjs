@@ -1,29 +1,42 @@
 /**
- * 预部署校验：把 worker/index.js 里的裁剪逻辑在真实数据上跑一遍。
+ * 预部署校验：把服务端的裁剪逻辑在**真实上游数据**上跑一遍。
  *
  * 检查四件事：
  *   1. 裁剪后的字段集合与预期一致（不多不少）
  *   2. main_rank(30) + second_rank(80) 都在，合计 110 条
- *   3. 体积省了多少（含 gzip，因为 Cloudflare 会对响应做压缩）
+ *   3. 体积省了多少（含 gzip）
  *   4. 用裁剪后的数据复算「排名定位」，确认不再被截断在 30 名
+ *
+ * 字段清单从 `server/weekly.go` 里读（**不是**从已停用的 worker/index.js），
+ * 因为周刊转发现在由 Go 后端承担。
+ *
+ * 与 Go 测试的分工：Go 那边用假上游验证逻辑；这里用**真实上游响应**验证
+ * 线上数据的形状与体积 —— 上游改了字段名的话，只有这个脚本能发现。
  *
  * 用法：node scripts/verify-trim.mjs
  */
 import { readFileSync } from 'node:fs'
 import { gzipSync } from 'node:zlib'
 
+const UPSTREAM = 'https://www.evocalrank.com/data/info/latest.json'
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'
 
-// ── 1. 从 worker 源码里抠出真实使用的字段清单，避免两边不一致 ──
-const workerSrc = readFileSync('worker/index.js', 'utf8')
-const m = workerSrc.match(/const VIDEO_FIELDS = \[([\s\S]*?)\]/)
-if (!m) {
-  console.error('✗ 在 worker/index.js 中找不到 VIDEO_FIELDS')
+// ── 1. 从 Go 源码里抠出真实使用的字段清单，避免两边不一致 ──
+function readFieldsFromGo(file) {
+  const src = readFileSync(file, 'utf8')
+  const m = src.match(/var\s+VIDEO_FIELDS\s*=\s*\[\]string\{([\s\S]*?)\n\}/)
+  if (!m) return null
+  return [...m[1].matchAll(/"([^"]+)"/g)].map((x) => x[1])
+}
+
+const fields = readFieldsFromGo('server/weekly.go')
+if (!fields) {
+  console.error('✗ 在 server/weekly.go 中找不到 VIDEO_FIELDS')
+  console.error('  若改名了，请同步更新本脚本的匹配规则。')
   process.exit(1)
 }
-const fields = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1])
-console.log('① worker 保留的字段（从源码读取，非硬编码）')
+console.log('① 服务端保留的字段（从 server/weekly.go 读取，非硬编码）')
 console.log('   ' + fields.join(', '))
 
 const EXPECTED = [
@@ -47,10 +60,18 @@ if (JSON.stringify(fields) !== JSON.stringify(EXPECTED)) {
 console.log('   ✓ 含标题(title)、排名(rank)、av号(avid)、链接(url)')
 console.log('   ✓ 不含 referSource / coverurl / pubdate / share 等冗余字段')
 
+// 顺带确认 Go 那边的裁剪逻辑与这里一致（同为「字段存在才输出」）
+const goSrc = readFileSync('server/weekly.go', 'utf8')
+if (!goSrc.includes('exists') || !goSrc.includes('raw == nil')) {
+  console.log('   ⚠ 没在 Go 源码里找到「字段不存在则跳过」的判断，请人工确认裁剪语义')
+}
+
 // ── 2. 抓真实数据并裁剪 ──
-const res = await fetch('https://www.evocalrank.com/data/info/latest.json', {
-  headers: { 'User-Agent': UA },
-})
+const res = await fetch(UPSTREAM, { headers: { 'User-Agent': UA } })
+if (!res.ok) {
+  console.error(`✗ 上游返回 HTTP ${res.status}`)
+  process.exit(1)
+}
 const raw = await res.text()
 const original = JSON.parse(raw)
 

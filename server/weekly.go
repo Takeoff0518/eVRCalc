@@ -69,7 +69,7 @@ type WeeklyPeriod struct {
 	CollectEndTime   string        `json:"collect_end_time"`
 	MainRank         []WeeklyVideo `json:"main_rank"`
 	SecondRank       []WeeklyVideo `json:"second_rank"`
-	// 本工具自己加的字段：数据取回时间，便于前端标注新鲜度。
+	// 本工具自己加的字段：数据获取时间，便于前端标注新鲜度。
 	// 前端不认识会直接忽略，不影响兼容。
 	FetchedAt string `json:"fetched_at,omitempty"`
 }
