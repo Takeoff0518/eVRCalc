@@ -17,19 +17,21 @@ const DEFAULT_TIMEOUT = 5000
  * API 基地址。
  *
  * 前端部署在 GitHub Pages（evrc.tbpdt.top），后端跑在家里那台机器上
- * （Go 服务，形如 mc.tbpdt.top:9983），两者**跨域**，所以生产构建时必须由
- * `VITE_API_BASE` 指定后端地址；否则默认走相对路径（本地开发由 Vite proxy
- * 转发，同源）。
+ * （Go 服务，形如 mc.tbpdt.top:9983），两者**跨域**。
  *
- * 例：VITE_API_BASE=https://mc.tbpdt.top:9983
+ * 地址的解析顺序见 `runtimeConfig.ts`：先读站点根目录的 `config.json`
+ * （运行时可改，不必重新构建），取不到再退回构建期的 `VITE_API_BASE`，
+ * 最后才是相对路径（本地开发由 Vite proxy 转发）。
  *
- * 注意这是构建期变量。后端那边的上游地址、缓存 TTL、限流阈值全在
- * server/server.yaml 里，调整那些不需要重新构建前端。
+ * 注意协议必须与页面一致：页面在 https 下时，浏览器会**硬拦**跨域的
+ * http 请求（混合内容），所以后端必须自己启用 HTTPS。
  */
-const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '')
 
-function apiUrl(path: string): string {
-  return `${API_BASE}${path}`
+import { loadRuntimeConfig } from './runtimeConfig'
+
+async function apiUrl(path: string): Promise<string> {
+  const { apiBase } = await loadRuntimeConfig()
+  return `${apiBase}${path}`
 }
 
 /** 带超时的 fetch，天然不抛异常 */
@@ -66,8 +68,8 @@ export async function fetchJson<T>(
 // ── 周刊接口 ─────────────────────────────────────────────────────
 
 /** 期数目录（含最新期号） */
-export function fetchWeeklyInfo(): Promise<FetchResult<InfoJson>> {
-  return fetchJson<InfoJson>(apiUrl('/api/weekly/info'))
+export async function fetchWeeklyInfo(): Promise<FetchResult<InfoJson>> {
+  return fetchJson<InfoJson>(await apiUrl('/api/weekly/info'))
 }
 
 /**
@@ -75,11 +77,11 @@ export function fetchWeeklyInfo(): Promise<FetchResult<InfoJson>> {
  * 决策 5：本工具只获取最新一期，它同时充当排名定位、Top1 叠加、
  * 「减去上期数据」三项功能的基准（见 plan.md §0 说明）。
  */
-export function fetchWeeklyLatest(): Promise<FetchResult<WeeklyPeriod>> {
-  return fetchJson<WeeklyPeriod>(apiUrl('/api/weekly/latest'))
+export async function fetchWeeklyLatest(): Promise<FetchResult<WeeklyPeriod>> {
+  return fetchJson<WeeklyPeriod>(await apiUrl('/api/weekly/latest'))
 }
 
 /** 特定期数数据（本版本默认不用，保留给将来切换） */
-export function fetchWeeklyRank(n: number | string): Promise<FetchResult<WeeklyPeriod>> {
-  return fetchJson<WeeklyPeriod>(apiUrl(`/api/weekly/rank?n=${encodeURIComponent(String(n))}`))
+export async function fetchWeeklyRank(n: number | string): Promise<FetchResult<WeeklyPeriod>> {
+  return fetchJson<WeeklyPeriod>(await apiUrl(`/api/weekly/rank?n=${encodeURIComponent(String(n))}`))
 }

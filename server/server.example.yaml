@@ -14,6 +14,30 @@
 # 生产环境是 mc.tbpdt.top:9983 —— 那台机器上 ddns-go 负责把域名指向动态 IP。
 listen: ":9983"
 
+# ── HTTPS ─────────────────────────────────────────────────────────
+# 直连暴露时这一节**基本是必须的**，不是可选项。
+#
+# 原因：前端页面在 https:// 下（GitHub Pages），浏览器会硬拦跨域的 http://
+# 请求（混合内容）；这是浏览器规则，服务端改不了。不配这一节，界面会一直
+# 显示「周刊数据不可用」，且 B 站取数点了没反应。
+#
+# 这里不内置 ACME 自动签发：Let's Encrypt 的 HTTP-01 挑战需要 80 端口可达，
+# 而家庭宽带通常封 80/443（实测本机 80、443、8080、8443 全部超时）。
+# 签发用支持 DNS-01 的 acme.sh 一次搞定，见 DEPLOY.md。
+#
+# 不填则退回明文 HTTP（仅适合本地开发，或前端也跑在 http 下的情况）。
+tls:
+  # 留空则自动判断：下面两个都填了就算启用
+  # enabled: true
+
+  # 证书链（fullchain）与私钥的绝对路径或相对本配置文件的路径
+  # cert_file: "/etc/evrcalc/fullchain.pem"
+  # key_file:  "/etc/evrcalc/privkey.pem"
+
+  # 启动时校验证书能否加载，默认 true。
+  # 不建议关：关了只会在第一个请求进来时才炸，更难排查。
+  # validate_on_start: true
+
 upstream:
   # 周刊数据源。换域名或换路径只改这里，不用重新编译。
   weekly: "https://www.evocalrank.com"

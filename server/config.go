@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,43 @@ type Config struct {
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 	CORS      CORSConfig      `yaml:"cors"`
 	Log       LogConfig       `yaml:"log"`
+	TLS       TLSConfig       `yaml:"tls"`
+}
+
+// TLSConfig 是直连暴露时绕不开的一环。
+//
+// 前端页面本身在 https:// 下（GitHub Pages），浏览器会**硬拦**跨域的 http://
+// 请求（混合内容），所以后端必须自己会说 HTTPS —— 这是浏览器规则，服务端改不了。
+//
+// 不内置 ACME 自动签发的理由：Let's Encrypt 的 HTTP-01 挑战需要 80 端口可达，
+// 而家庭宽带通常封 80/443（实测本机 80、443、8080、8443 全部超时）。
+// 因此这里只负责「加载已有证书」，签发交给支持 DNS-01 的 acme.sh 一次搞定。
+type TLSConfig struct {
+	// 是否启用 HTTPS。留空则自动判断：cert_file 与 key_file 都填了就算启用。
+	Enabled *bool `yaml:"enabled"`
+	// 证书链（fullchain）与私钥路径
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	// 启动时校验证书能否加载；默认 true。
+	// 关掉它的唯一场景是「第一次启动时证书还没签下来」，但那会导致 HTTPS 起不来，
+	// 所以不建议关。
+	ValidateOnStart *bool `yaml:"validate_on_start"`
+}
+
+// IsEnabled 判断是否应当以 HTTPS 启动
+func (t TLSConfig) IsEnabled() bool {
+	if t.Enabled != nil {
+		return *t.Enabled
+	}
+	return t.CertFile != "" && t.KeyFile != ""
+}
+
+// ShouldValidate 是否在启动时预检证书
+func (t TLSConfig) ShouldValidate() bool {
+	if t.ValidateOnStart != nil {
+		return *t.ValidateOnStart
+	}
+	return true
 }
 
 type UpstreamConfig struct {
@@ -265,6 +303,41 @@ func (c *Config) Validate() error {
 	if len(c.RateLimit.TrustedProxies) > 0 && (c.RateLimit.WeeklyPerMinute > 0 || c.RateLimit.BiliPerMinute > 0) {
 		if _, err := buildIPMatcher(c.RateLimit.TrustedProxies); err != nil {
 			return fmt.Errorf("rate_limit.trusted_proxies: %w", err)
+		}
+	}
+
+	if err := c.TLS.validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validate 检查 TLS 配置的自相矛盾之处，并把相对路径解析成绝对路径。
+//
+// 之所以在这里就把路径定死：进程的工作目录可能被服务管理器改掉
+// （systemd 不设 WorkingDirectory 时就是 /），相对路径会突然找不到证书。
+func (t *TLSConfig) validate() error {
+	if !t.IsEnabled() {
+		return nil
+	}
+	if t.CertFile == "" || t.KeyFile == "" {
+		return fmt.Errorf("tls: 启用了 HTTPS，但 cert_file 与 key_file 必须同时提供")
+	}
+	for _, p := range []struct{ name, path string }{
+		{"tls.cert_file", t.CertFile},
+		{"tls.key_file", t.KeyFile},
+	} {
+		abs, err := filepath.Abs(p.path)
+		if err != nil {
+			return fmt.Errorf("%s: 无法解析为绝对路径: %w", p.name, err)
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return fmt.Errorf("%s: %w（请确认证书文件已签好并放到该位置）", p.name, err)
+		}
+		if p.name == "tls.cert_file" {
+			t.CertFile = abs
+		} else {
+			t.KeyFile = abs
 		}
 	}
 	return nil

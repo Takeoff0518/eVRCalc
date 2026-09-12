@@ -23,12 +23,14 @@ export interface StatsFormProps {
   biliStats?: BiliStats
   /** 正在取数 */
   biliLoading?: boolean
-  /** 取数失败的原因 */
+  /** 取数失败的原因（已翻译成可操作的说法） */
   biliError?: string
   /** 点「取回数据」：把输入框内容交给上层解析 */
   onBiliFetch?: (input: string) => void
-  /** 后端是否可用（不可用时整个取数区块隐藏） */
-  biliAvailable?: boolean
+  /** 重试上一次的取数（失败后出现） */
+  onBiliRetry?: () => void
+  /** 后端地址，显示在报错信息下方便于排查 */
+  apiBase?: string
 }
 
 interface FieldDef {
@@ -55,12 +57,16 @@ export function StatsForm({
   biliLoading,
   biliError,
   onBiliFetch,
-  biliAvailable,
+  onBiliRetry,
+  apiBase,
 }: StatsFormProps) {
   const hasAnyInput = (Object.keys(stats) as (keyof RawStats)[]).some((k) => stats[k] > 0)
   const [input, setInput] = useState('')
 
-  const showFetch = Boolean(onBiliFetch) && biliAvailable !== false
+  // 注意：**不因为一次取数失败就收起这个区块**。
+  // 早先的版本会在失败后隐藏整块，结果是「点一下就没了」，用户既看不到原因
+  // 也无法重试。现在无论成功失败都留着，失败了就明说失败在哪。
+  const showFetch = Boolean(onBiliFetch)
 
   const submit = () => {
     if (!onBiliFetch || biliLoading) return
@@ -110,7 +116,7 @@ export function StatsForm({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submit()
               }}
-              placeholder="粘贴视频链接 / BV 号 / av 号，或点右侧榜单里的「填入」"
+              placeholder="粘贴视频链接 / BV 号 / av 号，或点下方榜单里的「填入」"
               className="min-w-0 flex-1 border border-ink bg-transparent px-2 py-1.5 text-[11px] outline-none focus:bg-ink focus:text-paper"
             />
             <button
@@ -121,11 +127,26 @@ export function StatsForm({
             >
               {biliLoading ? '获取中…' : '取回数据'}
             </button>
+            {biliError && onBiliRetry ? (
+              <button type="button" className="btn-flat shrink-0" onClick={onBiliRetry} disabled={biliLoading}>
+                重试
+              </button>
+            ) : null}
           </div>
 
-          <div className="mt-1.5 text-[10px] leading-[1.6] min-h-[15px]">
+          <div className="mt-1.5 text-[10px] leading-[1.6]">
             {biliError ? (
-              <span style={{ color: 'var(--color-alert)' }}>取数失败：{biliError}</span>
+              <div style={{ color: 'var(--color-alert)' }}>
+                <div>取数失败：{biliError}</div>
+                {apiBase ? (
+                  <div className="text-muted mt-0.5">
+                    当前后端地址 <span className="nums">{apiBase}</span>
+                    <span> · 可改站点根目录的 config.json 后刷新，无需重新部署</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : biliLoading ? (
+              <span className="text-muted">正在取回…</span>
             ) : biliStats ? (
               <span className="text-muted">
                 已填入《{biliStats.title}》

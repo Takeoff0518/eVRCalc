@@ -178,28 +178,95 @@ sudo systemctl enable --now evrcalc
 journalctl -u evrcalc -f
 ```
 
-### 6. 域名与端口
+### 6. 域名、端口与证书
 
-`mc.tbpdt.top` 的 A 记录由 **`ddns-go`** 维护（家用宽带是动态 IP）。
-后端默认监听 `:9983`，所以访问地址形如 `https://mc.tbpdt.top:9983`。
+`mc.tbpdt.top` 的 A 记录由 **`ddns-go`** 维护（家用宽带是动态 IP），
+直连源站、**没走 Cloudflare 代理**。后端监听 `:9983`，所以访问地址是
+`https://mc.tbpdt.top:9983`。
 
-**关于证书**：如果 DDNS 只做 DNS 解析、没有反代，那么 `https://…:9983` 需要
-后端自己持有证书，否则浏览器会拦。两种做法：
+#### 为什么 HTTPS 是必须的，不是可选的
 
-- **推荐**：把子域挂到 Cloudflare 代理（橙云），回源端口设成 9983。
-  这样边缘有 TLS、有免费防护，回源端口不必是 443。
-  **注意**：走了代理之后，后端看到的对端 IP 是 Cloudflare 的，
-  要读真实客户端 IP 必须配置：
-  ```yaml
-  rate_limit:
-    trusted_proxies: ["cloudflare"]
-  ```
-  ⚠️ **不配这个，限流会把所有访客当成同一个 IP**；而如果**没有**走代理却配了它，
-  任何人都能伪造 `CF-Connecting-IP` 绕过限流。两者都会出问题，别弄错方向。
+前端页面在 `https://evrc.tbpdt.top` 下。浏览器会**硬拦**从 https 页面发出的
+跨域 `http://` 请求（混合内容规则），报错还是一句毫无信息量的
+`Failed to fetch`。这是浏览器行为，服务端没有任何办法绕过。
 
-- 或者用 Caddy / nginx 做本机反代并自动签 Let's Encrypt 证书。
-  注意家庭宽带常封 443，用非标准端口时 Let's Encrypt 的 HTTP-01 挑战需要 80 端口可达，
-  否则改用 DNS-01。
+所以后端必须自己会说 HTTPS。表现出的症状就是：**界面一直显示「周刊数据不可用」，
+B 站取数点了没反应**。
+
+> 换 WebSocket 也解决不了：`ws://` 与 `http://` 受同一条规则约束，
+> `wss://` 与 `https://` 一样需要证书。绕不过去。
+
+#### 签发证书（DNS-01，不需要 80 端口）
+
+家庭宽带通常封 80/443（实测本机 80、443、8080、8443 全部超时），
+所以 Let's Encrypt 的 HTTP-01 挑战走不通。好在 `tbpdt.top` 的 NS 在
+Cloudflare（`sarah/seamus.ns.cloudflare.com`），**DNS-01 可行**。
+
+在 Cloudflare 面板 → My Profile → API Tokens 建一个 token，
+权限给 `Zone → DNS → Edit`，范围限定 `tbpdt.top`。然后：
+
+```bash
+curl https://get.acme.sh | sh -s email=你的邮箱
+export CF_Token="刚才建的token"
+
+# 用 DNS-01 签发（--server letsencrypt 是为了拿到被广泛信任的证书，
+# 不加会默认用 ZeroSSL）
+~/.acme.sh/acme.sh --issue --dns dns_cf \
+  -d mc.tbpdt.top \
+  --server letsencrypt
+
+# 装到固定位置，并让 acme.sh 自己管续期
+~/.acme.sh/acme.sh --install-cert -d mc.tbpdt.top \
+  --key-file       /etc/evrcalc/privkey.pem \
+  --fullchain-file /etc/evrcalc/fullchain.pem \
+  --reloadcmd      "systemctl restart evrcalc"
+```
+
+`--install-cert` 会注册一个 cron 任务，之后每 60 天自动续期并重启服务。
+**注意 `--reloadcmd` 别漏**，否则续期后进程还在用旧证书。
+
+#### 配置后端启用 HTTPS
+
+```yaml
+tls:
+  cert_file: "/etc/evrcalc/fullchain.pem"
+  key_file:  "/etc/evrcalc/privkey.pem"
+```
+
+重启后用 `--check` 确认：
+
+```bash
+./evrcalc-server --config server.yaml --check
+# 应显示：监听地址 :9983（HTTPS） / [OK] 证书加载正常
+```
+
+**如果没配 tls，`--check` 会明确警告**「若前端页面在 https 下……界面会一直显示
+周刊数据不可用」，照它说的做即可。
+
+#### 证书必须覆盖 `mc.tbpdt.top`
+
+证书里的域名要和前端请求的地址**完全一致**（包括端口无关，但域名必须一致）。
+自签证书浏览器同样会拒——它会报证书错误，效果和连不上一样。
+
+#### 备选：挂 Cloudflare 代理（橙云）
+
+如果你更希望隐藏源站 IP、顺带拿到边缘防护，也可以把 `mc.tbpdt.top` 开成橙云，
+回源端口设成 9983。那样边缘有 TLS，源站可以用明文。
+
+**但这时必须配置**：
+
+```yaml
+rate_limit:
+  trusted_proxies: ["cloudflare"]
+```
+
+⚠️ 两个方向都会出问题，别弄错：
+- 走了代理却**没配** → 后端看到的是 Cloudflare 的 IP，限流会把所有访客当成同一个人
+- 没走代理却**配了** → 任何人都能伪造 `CF-Connecting-IP` 绕过限流
+
+另外 Cloudflare 免费版代理只支持特定端口回源（443/2053/2083/2087/2096/8443 等），
+9983 **可能不在列表里**，开之前先在面板上确认，否则会直接 521/522。
+（本项目目前走的是直连，没有依赖这一条。）
 
 ---
 
@@ -207,15 +274,37 @@ journalctl -u evrcalc -f
 
 前端仍是 GitHub Pages，由 `.github/workflows/deploy-pages.yml` 自动构建部署。
 
-工作流里已写入后端地址：
+### API 地址现在是**运行时**可配的
+
+不用再为换地址重新构建前端了。解析顺序：
+
+1. 站点根目录的 **`config.json`**（`public/config.json`，已入库）
+2. 构建期的 `VITE_API_BASE`（工作流里的兜底值）
+3. 相对路径（本地开发由 Vite proxy 转发）
+
+改 `public/config.json` 后**刷新页面即生效**。若直接改 GitHub Pages 上的
+`config.json`（仓库 → Settings → Pages 部署的分支，或直接改仓库文件等 CI 重跑），
+效果一样。
+
+```json
+{
+  "apiBase": "https://mc.tbpdt.top:9983",
+  "biliBase": ""
+}
+```
+
+`biliBase` 留空则跟随 `apiBase`。
+
+工作流里同时也留着兜底值：
 
 ```yaml
 env:
   VITE_API_BASE: https://mc.tbpdt.top:9983
 ```
 
-**这是构建期变量**：改了它必须重新部署 Pages。而后端那边的上游地址、缓存 TTL、
-限流阈值全在 `server.yaml` 里，改那些**不需要**重新构建前端。
+那是**构建期**变量，改了要重新部署 Pages —— 所以日常调整请改 `config.json`，
+别动它。后端那边的上游地址、缓存 TTL、限流阈值全在 `server.yaml` 里，
+改那些**不需要**重新构建前端。
 
 > ⚠️ 前提：仓库必须先在 **Settings → Pages → Source** 里选 "GitHub Actions"，
 > 否则工作流会在 `configure-pages` 步骤报 `Get Pages site failed ... Not Found`。

@@ -1,0 +1,8 @@
+{
+  "_note": "运行时可改的 API 地址。改完刷新页面即生效，不需要重新构建或部署前端。留空则退回构建时的 VITE_API_BASE。注意协议必须与页面一致：页面在 https 下时，浏览器会拦截 http 的后端地址（混合内容）。",
+
+  "apiBase": "https://mc.tbpdt.top:9983",
+
+  "_biliBase": "B 站接口地址。留空则跟随 apiBase（目前两者是同一个后端）",
+  "biliBase": ""
+}

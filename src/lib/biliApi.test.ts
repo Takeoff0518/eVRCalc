@@ -5,17 +5,38 @@
  * 取错标识会安静地填进另一条视频的数据。
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchBiliStats,
   formatFetchedAt,
   refFromVideo,
   resolveBiliInput,
 } from '../lib/biliApi'
+import { __resetRuntimeConfig } from '../lib/runtimeConfig'
+
+beforeEach(() => {
+  // 取数函数现在会先读运行时的 config.json（见 runtimeConfig.ts）。
+  // 每个用例都重置一次，否则会记住上一个用例的 Promise。
+  __resetRuntimeConfig()
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
 })
+
+/** 记下所有请求；config.json 单独应答，免得混进断言里 */
+function trackFetch(apiResponse: () => Response | Promise<Response>) {
+  const apiCalls: string[] = []
+  vi.stubGlobal('fetch', (url: string) => {
+    const u = String(url)
+    if (u.includes('config.json')) {
+      return Promise.resolve(new Response(JSON.stringify({ apiBase: 'https://backend.test' }), { status: 200 }))
+    }
+    apiCalls.push(u)
+    return Promise.resolve(apiResponse())
+  })
+  return apiCalls
+}
 
 describe('refFromVideo', () => {
   it('优先用 avid（周刊榜单里它总是存在）', () => {
@@ -67,17 +88,13 @@ describe('formatFetchedAt', () => {
 
 describe('fetchBiliStats', () => {
   function stubFetch(body: unknown, status = 200) {
-    const calls: string[] = []
-    vi.stubGlobal('fetch', (url: string) => {
-      calls.push(String(url))
-      return Promise.resolve(
+    return trackFetch(
+      () =>
         new Response(JSON.stringify(body), {
           status,
           headers: { 'content-type': 'application/json' },
         }),
-      )
-    })
-    return calls
+    )
   }
 
   const sample = {
@@ -130,7 +147,13 @@ describe('fetchBiliStats', () => {
   })
 
   it('网络异常也转成 { ok:false }', async () => {
-    vi.stubGlobal('fetch', () => Promise.reject(new Error('Failed to fetch')))
+    trackFetch(() => Promise.reject(new Error('Failed to fetch')) as never)
+    vi.stubGlobal('fetch', (url: string) => {
+      if (String(url).includes('config.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ apiBase: 'https://backend.test' }), { status: 200 }))
+      }
+      return Promise.reject(new Error('Failed to fetch'))
+    })
     const res = await fetchBiliStats({ bvid: 'BV1mKto6kEBQ' })
     expect(res.ok).toBe(false)
   })
@@ -138,24 +161,19 @@ describe('fetchBiliStats', () => {
 
 describe('resolveBiliInput', () => {
   it('空输入直接失败，不发请求', async () => {
-    const calls: string[] = []
-    vi.stubGlobal('fetch', (url: string) => {
-      calls.push(String(url))
-      return Promise.resolve(new Response('{}'))
-    })
+    const calls = trackFetch(() => new Response('{}'))
     const res = await resolveBiliInput('   ')
     expect(res.ok).toBe(false)
     expect(calls).toHaveLength(0)
   })
 
   it('把输入编码进 q 参数', async () => {
-    const calls: string[] = []
-    vi.stubGlobal('fetch', (url: string) => {
-      calls.push(String(url))
-      return Promise.resolve(
-        new Response(JSON.stringify({ raw: '', bvid: 'BV1mKto6kEBQ', kind: 'url-bvid' }), { status: 200 }),
-      )
-    })
+    const calls = trackFetch(
+      () =>
+        new Response(JSON.stringify({ raw: '', bvid: 'BV1mKto6kEBQ', kind: 'url-bvid' }), {
+          status: 200,
+        }),
+    )
     const res = await resolveBiliInput('https://www.bilibili.com/video/BV1mKto6kEBQ/?a=1&b=2')
     expect(res.ok).toBe(true)
     // & 与 ? 必须被编码，否则会被当成两个查询参数

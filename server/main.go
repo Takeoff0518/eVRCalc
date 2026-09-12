@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -69,14 +71,28 @@ func main() {
 	// 优雅退出：收到信号后停止接收新连接，给在途请求 10 秒收尾
 	errCh := make(chan error, 1)
 	go func() {
+		scheme := "http"
+		if cfg.TLS.IsEnabled() {
+			scheme = "https"
+		}
 		logger.Info("服务启动",
 			"listen", cfg.Listen,
+			"scheme", scheme,
 			"weekly_upstream", cfg.Upstream.Weekly,
 			"bilibili_upstream", cfg.Upstream.Bilibili,
 			"cors_origins", cfg.CORS.AllowedOrigins,
 			"trusted_proxies", cfg.RateLimit.TrustedProxies,
 		)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+
+		var err error
+		if cfg.TLS.IsEnabled() {
+			// 用 ListenAndServeTLS 而不是自己包 tls.Listener：它会在启动时
+			// 校验证书能否解析，坏证书立刻失败，而不是等第一个请求才炸
+			err = httpSrv.ListenAndServeTLS(cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		} else {
+			err = httpSrv.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -87,6 +103,19 @@ func main() {
 	select {
 	case err := <-errCh:
 		logger.Error("监听失败", "err", err)
+
+		// 这两类失败几乎占了全部，给出可操作的提示比丢一个裸错误有用得多
+		if cfg.TLS.IsEnabled() {
+			fmt.Fprintf(os.Stderr, "\nHTTPS 启动失败，请检查证书：\n  cert = %s\n  key  = %s\n",
+				cfg.TLS.CertFile, cfg.TLS.KeyFile)
+		} else {
+			fmt.Fprintf(os.Stderr, "\n当前以**明文 HTTP** 启动。如果前端页面在 https 下，\n"+
+				"浏览器会拦截跨域的 http 请求（混合内容），必须在 server.yaml 里配置 tls.* 启用 HTTPS。\n")
+		}
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "address already in use") || strings.Contains(msg, "only one usage") {
+			fmt.Fprintf(os.Stderr, "\n端口 %s 已被占用：很可能是上一次的进程还没退出。\n", cfg.Listen)
+		}
 		os.Exit(1)
 	case sig := <-stop:
 		logger.Info("收到退出信号，正在关闭", "signal", sig.String())
@@ -102,8 +131,17 @@ func main() {
 
 // runConfigCheck 打印生效配置并试探上游连通性，用于部署后自检。
 func runConfigCheck(cfg *Config, logger *slog.Logger) {
+	scheme := "http"
+	if cfg.TLS.IsEnabled() {
+		scheme = "https"
+	}
+
 	fmt.Printf("配置文件解析成功\n")
-	fmt.Printf("  监听地址      %s\n", cfg.Listen)
+	fmt.Printf("  监听地址      %s（%s）\n", cfg.Listen, strings.ToUpper(scheme))
+	if cfg.TLS.IsEnabled() {
+		fmt.Printf("  证书          %s\n", cfg.TLS.CertFile)
+		fmt.Printf("  私钥          %s\n", cfg.TLS.KeyFile)
+	}
 	fmt.Printf("  周刊上游      %s\n", cfg.Upstream.Weekly)
 	fmt.Printf("  B 站上游      %s\n", cfg.Upstream.Bilibili)
 	fmt.Printf("  上游超时      %s\n", cfg.Upstream.Timeout)
@@ -115,6 +153,21 @@ func runConfigCheck(cfg *Config, logger *slog.Logger) {
 	fmt.Printf("  限流          周刊=%d/min  B站=%d/min  burst=%d\n",
 		cfg.RateLimit.WeeklyPerMinute, cfg.RateLimit.BiliPerMinute, cfg.RateLimit.Burst)
 	fmt.Printf("  日志级别      %s\n", cfg.Log.Level)
+
+	// 前端在 GitHub Pages（https），所以明文 HTTP 的后端根本调不通。
+	// 这是实际部署时最容易踩且最难自己看出来的坑，因此在这里明确点出来。
+	if !cfg.TLS.IsEnabled() {
+		fmt.Printf("\n  ⚠ 未启用 HTTPS。若前端页面在 https 下，浏览器会拦截跨域的 http 请求\n")
+		fmt.Printf("    （混合内容），界面会一直显示「周刊数据不可用」。\n")
+		fmt.Printf("    要启用：在 server.yaml 里配置 tls.cert_file / tls.key_file，\n")
+		fmt.Printf("    证书签发方式见 DEPLOY.md「域名与端口」。\n")
+	} else {
+		if _, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil {
+			fmt.Printf("\n  [失败] 证书无法加载：%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\n  [OK]   证书加载正常\n")
+	}
 
 	srv, err := NewServer(cfg, logger)
 	if err != nil {

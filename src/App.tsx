@@ -12,11 +12,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { calculateScore } from './calc/score'
 import { fetchWeeklyInfo, fetchWeeklyLatest } from './lib/api'
 import {
+  describeError,
+  explainFetchError,
   fetchBiliStats,
   refFromVideo,
   resolveBiliInput,
   type BiliStats,
 } from './lib/biliApi'
+import { loadRuntimeConfig } from './lib/runtimeConfig'
 import { loadPeriodWithCache } from './lib/cachedFetch'
 import type { RawStats, WeeklyPeriod, WeeklyVideo } from './types/weekly'
 import { StatsForm } from './components/StatsForm'
@@ -57,10 +60,22 @@ export default function App() {
   const [biliLoading, setBiliLoading] = useState(false)
   const [biliError, setBiliError] = useState<string | undefined>()
   const [fillingAvid, setFillingAvid] = useState<string | undefined>()
-  // 后端是否可用。首次失败后置为 false，界面上就不再多显示一个注定失败的按钮。
-  const [biliAvailable, setBiliAvailable] = useState(true)
+  // 上一次的取数请求，供「重试」用
+  const lastRequest = useRef<(() => void) | undefined>(undefined)
+  // 后端地址，显示在报错信息里方便排查（异步读取，不阻塞渲染）
+  const [apiBase, setApiBase] = useState<string | undefined>()
 
   const resultRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void loadRuntimeConfig().then((c) => {
+      if (!cancelled) setApiBase(c.biliBase || c.apiBase || '(相对路径)')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const result = useMemo(() => calculateScore(stats), [stats])
   const hasAnyInput = useMemo(
@@ -120,30 +135,32 @@ export default function App() {
       setBiliError(undefined)
       setFillingAvid(avidForSpinner)
 
-      const res = await fetchBiliStats(ref)
-      setBiliLoading(false)
-      setFillingAvid(undefined)
-
-      if (!res.ok) {
-        setBiliError(res.error)
-        // 连不上后端时收起取数区块，避免一直给用户一个注定失败的入口
-        if (/HTTP 5\d\d|网络请求失败|请求超时|Failed to fetch/i.test(res.error)) {
-          setBiliAvailable(false)
+      let failure = ''
+      try {
+        const res = await fetchBiliStats(ref)
+        if (res.ok) {
+          const s = res.data
+          setBiliStats(s)
+          setStats({
+            play: s.play,
+            like: s.like,
+            favorite: s.favorite,
+            coin: s.coin,
+            comment: s.comment,
+            danmaku: s.danmaku,
+          })
+          return
         }
-        return
+        failure = res.error
+      } catch (err) {
+        // fetchBiliStats 本身不抛异常，这里是兜底，防止将来改动引入意外
+        failure = describeError(err)
+      } finally {
+        setBiliLoading(false)
+        setFillingAvid(undefined)
       }
 
-      const s = res.data
-      setBiliStats(s)
-      setBiliAvailable(true)
-      setStats({
-        play: s.play,
-        like: s.like,
-        favorite: s.favorite,
-        coin: s.coin,
-        comment: s.comment,
-        danmaku: s.danmaku,
-      })
+      setBiliError(await explainFetchError(failure))
     },
     [],
   )
@@ -156,7 +173,8 @@ export default function App() {
         setBiliError('这条记录里没有可用的视频标识')
         return
       }
-      void loadBiliStats(ref, video.avid)
+      lastRequest.current = () => void loadBiliStats(ref, video.avid)
+      lastRequest.current()
     },
     [loadBiliStats],
   )
@@ -164,29 +182,39 @@ export default function App() {
   /** 粘贴框里点「取回数据」：先解析任意输入，再取数 */
   const handleFetchFromInput = useCallback(
     async (input: string) => {
+      lastRequest.current = () => void handleFetchFromInput(input)
+
       setBiliLoading(true)
       setBiliError(undefined)
 
-      const resolved = await resolveBiliInput(input)
-      if (!resolved.ok) {
-        setBiliLoading(false)
-        setBiliError(resolved.error)
-        if (/HTTP 5\d\d|网络请求失败|请求超时|Failed to fetch/i.test(resolved.error)) {
-          setBiliAvailable(false)
+      let failure = ''
+      try {
+        const resolved = await resolveBiliInput(input)
+        if (resolved.ok) {
+          const { bvid, aid } = resolved.data
+          if (!bvid && !aid) {
+            setBiliLoading(false)
+            setBiliError('没能从输入里识别出视频，检查一下链接或 BV / av 号')
+            return
+          }
+          setBiliLoading(false)
+          await loadBiliStats({ bvid, aid })
+          return
         }
-        return
+        failure = resolved.error
+      } catch (err) {
+        failure = describeError(err)
       }
 
       setBiliLoading(false)
-      const { bvid, aid } = resolved.data
-      if (!bvid && !aid) {
-        setBiliError('没能从输入里识别出视频')
-        return
-      }
-      await loadBiliStats({ bvid, aid })
+      setBiliError(await explainFetchError(failure))
     },
     [loadBiliStats],
   )
+
+  const handleBiliRetry = useCallback(() => {
+    lastRequest.current?.()
+  }, [])
 
   const topValues: TopValues | undefined = useMemo(() => {
     if (!period) return undefined
@@ -251,7 +279,8 @@ export default function App() {
               biliLoading={biliLoading}
               biliError={biliError}
               onBiliFetch={handleFetchFromInput}
-              biliAvailable={biliAvailable}
+              onBiliRetry={handleBiliRetry}
+              apiBase={apiBase}
             />
 
             <div ref={resultRef}>
@@ -276,7 +305,7 @@ export default function App() {
                 total={result.total}
                 fromCache={periodFromCache}
                 cachedAt={periodCachedAt}
-                onFill={biliAvailable ? handleFillFromVideo : undefined}
+                onFill={handleFillFromVideo}
                 fillingAvid={fillingAvid}
               />
             ) : null}
