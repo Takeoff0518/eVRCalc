@@ -147,14 +147,14 @@ describe('「填入」按钮', () => {
   it('不传 onFill 时一个按钮都不渲染（后端不可用时的降级）', () => {
     const html = render(996_500)
     expect(countFill(html)).toBe(0)
-    expect(html).not.toContain('可取回该视频的实时数据')
+    expect(html).not.toContain('可获取该视频的实时数据')
   })
 
   it('传了 onFill 时，当前名次下方的两条各有一个按钮', () => {
     // 得点 996500 → 第 5 位；下方显示第 5、6 名两条
     const html = render(996_500, () => {})
     expect(countFill(html)).toBe(2)
-    expect(html).toContain('可取回该视频的实时数据')
+    expect(html).toContain('可获取该视频的实时数据')
   })
 
   it('上方的参考行不带按钮（它们只用于看差距）', () => {
@@ -175,7 +175,7 @@ describe('「填入」按钮', () => {
     const html = render(1000, () => {})
     expect(countFill(html)).toBe(0)
     // 但仍应显示提示，说明功能存在
-    expect(html).toContain('可取回该视频的实时数据')
+    expect(html).toContain('可获取该视频的实时数据')
   })
 
   it('正在取数的那个条目显示「获取中」而不是「填入」', () => {

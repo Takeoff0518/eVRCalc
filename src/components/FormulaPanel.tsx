@@ -266,9 +266,6 @@ export function FormulaPanel({ result }: { result?: ScoreResult }) {
           <div className="text-[10px] tracking-[0.1em] text-muted uppercase mb-1">计算与显示精度</div>
           <p className="text-[11px] leading-[1.7] m-0">
             计算过程内部保持全精度，仅在显示时保留两位小数。
-            <br />
-            官方发布的 <span className="nums">point</span> 是采集窗口时点的快照，
-            而本工具使用当前实时数据，因此结果与官方值存在约 0.1% 的固有偏差。
           </p>
         </div>
       </div>

@@ -84,7 +84,7 @@ function RankRefRow({
           type="button"
           disabled={filling}
           onClick={() => onFill(video)}
-          title={`取回《${video.title}》的播放/点赞/收藏/硬币/评论/弹幕并填入`}
+          title={`获取《${video.title}》的播放/点赞/收藏/硬币/评论/弹幕并填入`}
           className={`btn-flat-xs shrink-0 ml-auto ${filling ? 'btn-flat-xs-disabled' : ''}`}
         >
           {filling ? '获取中' : '填入'}
@@ -175,9 +175,7 @@ export function WeeklyRank({
         <p className="text-[10px] text-muted mt-2 mb-0 leading-[1.6]">
           榜单共 <span className="nums">{ranked.length}</span> 条可比对（第 1–30 名为主榜，
           第 31 名以后为续榜）。点击标题可跳转到对应视频。
-          {onFill ? '点「填入」可取回该视频的实时数据并自动填进上方的输入框。' : ''}
-          <br />
-          官方 point 为采集窗口时点快照，与本工具实时数据存在约 0.1% 偏差。
+          {onFill ? '点「填入」可获取该视频的实时数据并自动填进上方的输入框。' : ''}
         </p>
       </div>
     </div>

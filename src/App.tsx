@@ -3,9 +3,9 @@
  *
  * 设计要点（见 plan.md）：
  * - 计算内核是纯客户端的，**永远不依赖网络**
- * - 联网用于周刊相关功能（排名定位、Top1 叠加）与「从 B 站取回数据」
+ * - 联网用于周刊相关功能（排名定位、Top1 叠加）与「从 B 站获取数据」
  * - 只获取最新一期周刊
- * - 六项数据既可手动填写，也可从 B 站取回；后端离线时手填照旧
+ * - 六项数据既可手动填写，也可从 B 站获取；后端离线时手填照旧
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -65,8 +65,6 @@ export default function App() {
   // 后端地址，显示在报错信息里方便排查（异步读取，不阻塞渲染）
   const [apiBase, setApiBase] = useState<string | undefined>()
 
-  const resultRef = useRef<HTMLDivElement | null>(null)
-
   useEffect(() => {
     let cancelled = false
     void loadRuntimeConfig().then((c) => {
@@ -116,14 +114,11 @@ export default function App() {
     }
   }, [])
 
-  // ── 计算按钮：滚动到结果区（结果本身是响应式实时计算的） ─────────
-  const handleCalculate = useCallback(() => {
-    resultRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [])
-
+  // 「计算得点」按钮已移除：得点本来就是随输入实时计算的，
+  // 那个按钮实际只做了「滚动到结果区」，反而让人误以为计算由它触发。
   const handleClear = useCallback(() => setStats(EMPTY_STATS), [])
 
-  // ── 从 B 站取回六项数据 ────────────────────────────────────────
+  // ── 从 B 站获取六项数据 ────────────────────────────────────────
   /**
    * 取数并填入。`avid` 用于把榜单里那一行的按钮切成「获取中」。
    *
@@ -179,7 +174,7 @@ export default function App() {
     [loadBiliStats],
   )
 
-  /** 粘贴框里点「取回数据」：先解析任意输入，再取数 */
+  /** 粘贴框里点「获取」：先解析任意输入，再取数 */
   const handleFetchFromInput = useCallback(
     async (input: string) => {
       lastRequest.current = () => void handleFetchFromInput(input)
@@ -273,7 +268,6 @@ export default function App() {
             <StatsForm
               stats={stats}
               onChange={(patch) => setStats((cur) => ({ ...cur, ...patch }))}
-              onCalculate={handleCalculate}
               onClear={handleClear}
               biliStats={biliStats}
               biliLoading={biliLoading}
@@ -283,7 +277,7 @@ export default function App() {
               apiBase={apiBase}
             />
 
-            <div ref={resultRef}>
+            <div>
               {hasAnyInput ? (
                 <PointBoxes
                   result={result}

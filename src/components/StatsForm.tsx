@@ -1,7 +1,7 @@
 /**
- * 数据填写框 + 计算/清空按钮
+ * 数据填写框 + 清空按钮
  *
- * 六项数据可以手动填写，也可以从 B 站取回（点「取回数据」或榜单里的「填入」）。
+ * 六项数据可以手动填写，也可以从 B 站获取（点「获取」或榜单里的「填入」）。
  * 但**计算本身永远是纯客户端的** —— 后端不可用时手填照旧，功能不受影响。
  */
 
@@ -15,17 +15,16 @@ export interface StatsFormProps {
   stats: RawStats
   onChange: (patch: Partial<RawStats>) => void
 
-  onCalculate: () => void
   /** 清空六项数据 */
   onClear: () => void
 
-  /** 已取回的数据（用于显示取数时间与来源） */
+  /** 已获取的数据（用于显示取数时间与来源） */
   biliStats?: BiliStats
   /** 正在取数 */
   biliLoading?: boolean
   /** 取数失败的原因（已翻译成可操作的说法） */
   biliError?: string
-  /** 点「取回数据」：把输入框内容交给上层解析 */
+  /** 点「获取」：把输入框内容交给上层解析 */
   onBiliFetch?: (input: string) => void
   /** 重试上一次的取数（失败后出现） */
   onBiliRetry?: () => void
@@ -51,7 +50,6 @@ const FIELDS: FieldDef[] = [
 export function StatsForm({
   stats,
   onChange,
-  onCalculate,
   onClear,
   biliStats,
   biliLoading,
@@ -77,7 +75,7 @@ export function StatsForm({
 
   return (
     <div>
-      <SectionLabel note="数据可在 B 站视频页直接查看">数据输入</SectionLabel>
+      <SectionLabel>数据输入</SectionLabel>
 
       {/* 六个数据框：2 列 × 3 行，保持 4px 节奏 */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -105,7 +103,7 @@ export function StatsForm({
         ))}
       </div>
 
-      {/* ── 从 B 站取回 ───────────────────────────────────────────── */}
+      {/* ── 从 B 站获取 ───────────────────────────────────────────── */}
       {showFetch ? (
         <div className="mt-2.5 border-t border-ink pt-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -125,7 +123,7 @@ export function StatsForm({
               onClick={submit}
               disabled={biliLoading || !input.trim()}
             >
-              {biliLoading ? '获取中…' : '取回数据'}
+              {biliLoading ? '获取中…' : '获取'}
             </button>
             {biliError && onBiliRetry ? (
               <button type="button" className="btn-flat shrink-0" onClick={onBiliRetry} disabled={biliLoading}>
@@ -146,7 +144,7 @@ export function StatsForm({
                 ) : null}
               </div>
             ) : biliLoading ? (
-              <span className="text-muted">正在取回…</span>
+              <span className="text-muted">正在获取…</span>
             ) : biliStats ? (
               <span className="text-muted">
                 已填入《{biliStats.title}》
@@ -155,30 +153,21 @@ export function StatsForm({
                 {biliStats.cache === 'stale' ? (
                   <span style={{ color: 'var(--color-alert)' }}>
                     {' '}
-                    · 上游暂时不可用，这是上次取回的旧数据
+                    · 上游暂时不可用，这是上次获取的旧数据
                   </span>
                 ) : null}
               </span>
             ) : (
-              <span className="text-muted">
-                取回的是时点快照，与官方 point 存在约 0.1% 的偏差。
-              </span>
+              <span className="text-muted">数据来自 B 站当前时刻的公开统计。</span>
             )}
           </div>
         </div>
       ) : null}
 
-      {/* 操作按钮 */}
+      {/* 「计算得点」按钮已移除：得点是随输入实时计算的，那个按钮实际只做了
+          「滚动到结果区」这一件事，反而让人以为是它触发了计算。
+          现在只留一个「清空数据」。 */}
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className="btn-flat btn-flat-dark"
-          onClick={onCalculate}
-          disabled={!hasAnyInput}
-        >
-          计算得点
-        </button>
-
         <button type="button" className="btn-flat" onClick={onClear} disabled={!hasAnyInput}>
           清空数据
         </button>

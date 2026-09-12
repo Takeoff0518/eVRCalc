@@ -141,12 +141,6 @@ export function PointBoxes({ result, top, topLabel }: PointBoxesProps) {
           {nf.format(round0(result.total))}
         </span>
       </div>
-
-      {top ? (
-        <p className="text-[10px] text-muted mt-1.5 mb-0 leading-[1.6]">
-          叠加层为对数刻度、不显示具体数值，仅表示与 {topLabel ?? 'Top 1'} 的相对位置。
-        </p>
-      ) : null}
     </div>
   )
 }
