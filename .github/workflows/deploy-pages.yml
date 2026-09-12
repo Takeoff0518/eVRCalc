@@ -41,13 +41,15 @@ jobs:
         # 边缘再回源到家里。家里的 80/443 被运营商封了不影响 ——
         # 那是 Cloudflare 边缘的端口，不是你的。
         #
-        # 用 api 这个独立子域而不是 mc：mc.tbpdt.top 上还跑着 Minecraft /
+        # 用 api2 这个独立子域而不是 mc：mc.tbpdt.top 上还跑着 Minecraft /
         # OpenList 这类非 HTTP 服务，必须保持灰云，不能开代理。
+        #
+        # 不要改成 api.tbpdt.top —— 那个名字被早期的 Cloudflare Worker 占着。
         #
         # 这只是**构建期兜底值**。日常要改地址请改 public/config.json，
         # 那是运行时读取的，刷新页面即生效，不用重新部署 Pages。
         env:
-          VITE_API_BASE: https://api.tbpdt.top
+          VITE_API_BASE: https://api2.tbpdt.top
         run: npm run build
 
       # ⚠️ 前提：仓库必须先在 Settings → Pages → Source 里选 "GitHub Actions"。

@@ -150,6 +150,23 @@ cors:
 | `GET /api/bili/batch?bvid=a,b` | 批量查询（最多 20 条，服务端并发；留给将来的批量填充） |
 | `GET /api/healthz` | 健康检查 |
 
+### 排障工具
+
+后端的部署链路（Cloudflare 代理 → 家宽回源）出错时，报错信息往往很含糊
+（522、526 之类）。这几个脚本能把中层环节逐段照出来，比在面板上猜快得多：
+
+```bash
+npm run port:check -- mc.tbpdt.top 9983            # 外网看端口通不通
+npm run origin:check -- mc.tbpdt.top 9983 api2.tbpdt.top  # 模拟回源 + 测完整链路
+npm run cert:check -- mc.tbpdt.top 9983 api2.tbpdt.top    # 读证书、核对 SAN 覆盖
+npm run server:check -- https://api2.tbpdt.top     # 60 项接口自检
+```
+
+`cert:check` 尤其有用：526 报错时它能直接告诉你证书里**有没有**覆盖你的域名。
+实测踩过的一个坑是——在 Cloudflare 的 **Client Certificates** 页面签出来的
+是 mTLS 客户端证书，**天生没有 SAN**，于是 Full (strict) 下必然 526；
+正确的入口是 **SSL/TLS → Origin Server → Origin Certificates**。
+
 ## 为什么需要一个后端
 
 两件事都做不到纯前端：

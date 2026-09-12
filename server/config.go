@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
@@ -314,7 +315,11 @@ func (c *Config) Validate() error {
 
 // validate 检查 TLS 配置的自相矛盾之处，并把相对路径解析成绝对路径。
 //
-// 之所以在这里就把路径定死：进程的工作目录可能被服务管理器改掉
+// 这里**只检查自相矛盾**（启用了却没给路径），不检查文件是否存在 ——
+// 因为 `--check` 要在「证书还没放上去」的时候就能用来排查配置。
+// 文件是否存在由 TLS.validateFiles() 在真正启动时把关。
+//
+// 路径之所以在这里就定死：进程的工作目录可能被服务管理器改掉
 // （systemd 不设 WorkingDirectory 时就是 /），相对路径会突然找不到证书。
 func (t *TLSConfig) validate() error {
 	if !t.IsEnabled() {
@@ -323,22 +328,23 @@ func (t *TLSConfig) validate() error {
 	if t.CertFile == "" || t.KeyFile == "" {
 		return fmt.Errorf("tls: 启用了 HTTPS，但 cert_file 与 key_file 必须同时提供")
 	}
-	for _, p := range []struct{ name, path string }{
-		{"tls.cert_file", t.CertFile},
-		{"tls.key_file", t.KeyFile},
-	} {
-		abs, err := filepath.Abs(p.path)
-		if err != nil {
-			return fmt.Errorf("%s: 无法解析为绝对路径: %w", p.name, err)
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return fmt.Errorf("%s: %w（请确认证书文件已签好并放到该位置）", p.name, err)
-		}
-		if p.name == "tls.cert_file" {
-			t.CertFile = abs
-		} else {
-			t.KeyFile = abs
-		}
+	var err error
+	if t.CertFile, err = filepath.Abs(t.CertFile); err != nil {
+		return fmt.Errorf("tls.cert_file: 无法解析为绝对路径: %w", err)
+	}
+	if t.KeyFile, err = filepath.Abs(t.KeyFile); err != nil {
+		return fmt.Errorf("tls.key_file: 无法解析为绝对路径: %w", err)
+	}
+	return nil
+}
+
+// ValidateFiles 确认证书文件确实存在且能被加载。在真正开始监听之前调用。
+func (t TLSConfig) ValidateFiles() error {
+	if !t.IsEnabled() {
+		return nil
+	}
+	if _, err := tls.LoadX509KeyPair(t.CertFile, t.KeyFile); err != nil {
+		return fmt.Errorf("证书无法加载：%w\n  cert = %s\n  key  = %s", err, t.CertFile, t.KeyFile)
 	}
 	return nil
 }

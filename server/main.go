@@ -11,7 +11,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -56,6 +55,13 @@ func main() {
 	srv, err := NewServer(cfg, logger)
 	if err != nil {
 		logger.Error("初始化失败", "err", err)
+		os.Exit(1)
+	}
+
+	// 证书在真正监听之前才做严格检查 —— 这样 `--check` 能在证书还没放上去时
+	// 用来排查配置本身（DNS、端口、上游连通性），不至于因为缺文件就整个跑不了
+	if err := cfg.TLS.ValidateFiles(); err != nil {
+		logger.Error("TLS 配置有问题", "err", err)
 		os.Exit(1)
 	}
 
@@ -162,11 +168,13 @@ func runConfigCheck(cfg *Config, logger *slog.Logger) {
 		fmt.Printf("    要启用：在 server.yaml 里配置 tls.cert_file / tls.key_file，\n")
 		fmt.Printf("    证书签发方式见 DEPLOY.md「域名与端口」。\n")
 	} else {
-		if _, err := tls.LoadX509KeyPair(cfg.TLS.CertFile, cfg.TLS.KeyFile); err != nil {
-			fmt.Printf("\n  [失败] 证书无法加载：%v\n", err)
-			os.Exit(1)
+		// 只校验证书能否加载，**不要求文件存在** —— 见上面 ValidateFiles 的注释
+		if err := cfg.TLS.ValidateFiles(); err != nil {
+			fmt.Printf("\n  [警告] %v\n", err)
+			fmt.Printf("    证书还没就位。配置本身是对的，把证书放好即可启动。\n")
+		} else {
+			fmt.Printf("\n  [OK]   证书加载正常\n")
 		}
-		fmt.Printf("\n  [OK]   证书加载正常\n")
 	}
 
 	srv, err := NewServer(cfg, logger)

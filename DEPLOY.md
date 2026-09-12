@@ -191,7 +191,7 @@ HTTP/HTTPS，游戏连接会直接断掉。
 
 ```
 evrc.tbpdt.top    橙云  GitHub Pages（前端，人家本来就在 Cloudflare 上）
-api.tbpdt.top     橙云  CNAME → ddns 记录    ← 只给这个 Go 后端
+api2.tbpdt.top    橙云  CNAME → ddns 记录    ← 只给这个 Go 后端
 mc.tbpdt.top      灰云  A → 124.128.104.102  Minecraft / OpenList / 其他（不动）
 ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
 ```
@@ -205,29 +205,23 @@ ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
 #### 配置步骤
 
 1. **后端保持 `listen: ":9983"`**（绑所有网卡，不能是 `127.0.0.1`）。
-   `tls:` 一节**留空** —— 回源 TLS 交给 Cloudflare，不必自己签证书。
+   `tls:` 一节**必须配置** —— 见下面第 5 步（Cloudflare 用 HTTPS 回源，
+   源站不会讲 TLS 就一定连不上）。
 
-2. **腾出 `api.tbpdt.top`**：它现在被那个**已停用的 Worker** 占着
-   （实测仍在响应 `/api/weekly/latest`）。必须先释放，否则 DNS 记录建不了：
+2. **子域名**：用一个没被占用的名字（本文用 `api2`）。
+   `api.tbpdt.top` 被早期那个**已停用的 Worker** 占着，而且**它至今仍在公网上
+   响应**（实测 `/api/weekly/latest` 返回 200）—— 所以直接换名字更省事。
 
-   删掉 `wrangler.jsonc` 里的 `routes` 并重新部署：
-
-   ```bash
-   npx wrangler deploy
-   ```
-
-   或者在 Cloudflare 面板 → Workers & Pages → `evrcalc-api` → Settings →
-   Domains & Routes 里手动移除 `api.tbpdt.top`。
-
-   > 想跳过这一步也行：换用 `evrc-api.tbpdt.top` 之类的新名字，
-   > 同步改 `public/config.json` 与工作流里的 `VITE_API_BASE` 即可。
-   > 代价是那个废弃的 Worker 会继续挂在公网上。
+   > 想清理那个 Worker：删掉 `wrangler.jsonc` 里的 `routes` 后
+   > `npx wrangler deploy`，或在面板 → Workers & Pages → `evrcalc-api` →
+   > Settings → Domains & Routes 里移除 `api.tbpdt.top`。
+   > 它已无人维护，留着等于多一个裸露的旧接口。
 
 3. **建 DNS 记录**（Cloudflare 面板 → DNS）：
 
    | 类型 | 名称 | 目标 | 代理状态 |
    |---|---|---|---|
-   | CNAME | `api` | `ddns.tbpdt.top`（ddns-go 维护的那条） | **已代理（橙云）** |
+   | CNAME | `api2` | `ddns.tbpdt.top`（ddns-go 维护的那条） | **已代理（橙云）** |
 
    用 API 建的话务必带上 `"proxied": true` —— 用面板改记录类型时那个开关
    有可能被重置成灰云，那就等于直接把源站 IP 暴露出去了。
@@ -240,15 +234,58 @@ ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
 
    现在这条应该已经是「✓ 开放」—— 你之前就是靠它跑通 nmap 的。
 
-5. **回源证书**：面板 → SSL/TLS → Origin Server → **Create Certificate**，
-   一键签发（免费、15 年有效），装到源站上；然后把 SSL/TLS → Overview 的
-   模式设成 **Full (strict)**。
+5. **回源证书 + 让源站讲 HTTPS**（本节是本项目踩坑最多的一步）。
+   面板 → **SSL/TLS → Origin Server** → **Origin Certificates** 标签 →
+   [**Create Certificate**](https://dash.cloudflare.com/?to=/:account/:zone/ssl-tls/origin)，
+   一键签发（免费、15 年有效）；然后把 SSL/TLS → Overview 的模式设成 **Full (strict)**。
 
-   这一步不能省，也不能用 Flexible：Flexible 会让 Cloudflare 用 **http**
-   回源，而 http 回源时它会去连源站的 **80 端口** —— 你家 80 被封，直接 522。
+   **Hostnames 填 `*.tbpdt.top, tbpdt.top`**（通配符覆盖一级子域，`api2` 属于一级子域）。
 
-6. **回源端口**：一般跟随 DNS 记录，即 9983。若 Cloudflare 没用它，
-   在 **Rules → Origin Rules → Destination Port** 里显式指定 9983。
+   拿到证书后**源站也要启用 HTTPS**，否则 Cloudflare 用 HTTPS 回源会失败：
+
+   ```yaml
+   listen: ":9983"
+   tls:
+     cert_file: "/etc/evrcalc/fullchain.pem"
+     key_file:  "/etc/evrcalc/privkey.pem"
+   ```
+
+   ⚠️ **别走错页面。** Cloudflare 的 SSL/TLS 下有两个名字很像的入口，很容易点错：
+
+   | 页面 | 证书类型 | 用途 | 有没有 SAN |
+   |---|---|---|---|
+   | SSL/TLS → **Origin Server** → Origin Certificates | **Origin CA**（回源证书） | 给 Cloudflare 回源时**验证你的服务器** | **有**，填的 hostname 就是 SAN |
+   | SSL/TLS → **Client Certificates** | **客户端证书**（mTLS） | 给 Cloudflare **验证来访客户端** | **没有** |
+
+   走错的表现很好认：签发出来的证书 `subjectAltName` 是**空的**、CN 只有 `Cloudflare`，
+   于是 Full (strict) 下必然 **526**（Cloudflare 找不到能匹配你域名的条目）。
+   客户端证书天生不需要 SAN，所以怎么重签都不会有。
+   正确的证书长这样：`CN=CloudFlare Origin Certificate`、
+   颁发者 `CloudFlare Origin SSL Certificate Authority`、
+   SAN 为 `DNS:*.tbpdt.top, DNS:tbpdt.top`。
+
+   自检命令：
+
+   ```bash
+   node scripts/inspect-cert.mjs mc.tbpdt.top 9983 api2.tbpdt.top
+   ```
+
+   要看到 SAN 里列出 `DNS:*.tbpdt.top` 与 `DNS:tbpdt.top`，
+   以及「✓ 通配符匹配 *.tbpdt.top」。
+
+   ⚠️ **不能用 Flexible**：它会让 Cloudflare 用 **http** 回源，而 http 回源时
+   它会去连源站的 **80 端口** —— 你家 80 被封，直接 522。
+
+6. **回源端口**：Cloudflare 默认按标准端口回源，**不会**自动用 9983。
+   在 **Rules → Overview → Create rule → Origin Rule** 里加一条：
+
+   | 字段 | 值 |
+   |---|---|
+   | When incoming requests match | Custom filter → `Hostname equals api2.tbpdt.top` |
+   | Then → **Destination Port** | Rewrite to **`9983`** |
+
+   没有这条的典型表现：**522 且响应耗时约 20 秒**（SYN 被丢包），
+   而源站本身明明是好的。
 
 7. **限流取真实 IP**：开了代理后后端看到的对端 IP 是 Cloudflare 的，
    必须配置：
@@ -262,7 +299,7 @@ ddns.tbpdt.top    灰云  A → 动态 IP           ← ddns-go 只管这一条
    - 走了代理却**没配** → 限流把所有访客当成同一个人
    - 没走代理却**配了** → 任何人伪造 `CF-Connecting-IP` 就能绕过限流
 
-8. 前端 `public/config.json` 里 `apiBase` 填 `https://api.tbpdt.top`（不带端口）。
+8. 前端 `public/config.json` 里 `apiBase` 填 `https://api2.tbpdt.top`（不带端口）。
 
 > **顺带一提**：`OpenList` 这类本身就想走 HTTP 的服务，也可以照同样办法挂到
 > 自己的橙云子域上，不必和 `mc` 共用灰云。本文只针对本项目，不展开。
@@ -315,7 +352,7 @@ tls:
 
 ```json
 {
-  "apiBase": "https://api.tbpdt.top",
+  "apiBase": "https://api2.tbpdt.top",
   "biliBase": ""
 }
 ```
@@ -327,7 +364,7 @@ tls:
 
 ```yaml
 env:
-  VITE_API_BASE: https://api.tbpdt.top
+  VITE_API_BASE: https://api2.tbpdt.top
 ```
 
 > ⚠️ 前提：仓库必须先在 **Settings → Pages → Source** 里选 "GitHub Actions"，
@@ -378,14 +415,17 @@ curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest |
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 界面显示「周刊数据不可用」 | 前端够不到后端 | 按顺序查：`npm run port:check` 看端口 → `config.json` 地址对不对 → `--check` 看后端自己能否取到上游 |
-| Cloudflare 报 521/522/523 | 边缘连不上源站 | 源站没起、端口没转发、或回源端口不对。先跑 `npm run port:check` |
-| Cloudflare 报 525/526 | 回源 TLS 握手失败 | 已配 Origin CA 证书？SSL/TLS 模式是不是 Full (strict)？ |
-| **一开橙云就 522** | SSL 模式是 **Flexible** | Flexible 会让 Cloudflare 用 **http 回源**、即去连源站的 **80 端口**，而家里 80 被封 → 522。改成 **Full (strict)** 并装上 Origin CA 证书 |
+| **522，且耗时约 20 秒** | 边缘回源到了没人应答的端口 | **最常见的一个坑**。Cloudflare 默认按标准端口回源，**不会**自动用 9983。加 **Origin Rule → Destination Port = 9983**。先跑 `node scripts/check-origin-pull.mjs mc.tbpdt.top 9983` 确认源站在外面可达 |
+| 522，源站已确认可达且讲 TLS | Cloudflare 用了 http 回源（模式是 Flexible） | 改成 **Full (strict)** 并在源站启用 `tls.*` |
+| **526** | 回源证书不被接受 | 跑 `node scripts/inspect-cert.mjs mc.tbpdt.top 9983 api2.tbpdt.top` 看 SAN。**SAN 为空 = 签成了客户端证书**（Client Certificates 页面），要去 **Origin Server → Origin Certificates** 重签。其余可能：私钥与证书不配对、证书过期、`cert_file` 没用 fullchain |
+| 526 → 换证书后变 522 | 换了证书但源站没重启 / 没启用 tls | `--check` 应显示 `（HTTPS）` 与 `[OK] 证书加载正常` |
+| 525/526，SAN 也正确 | 模式与源站协议不一致 | Full (strict) 要求源站讲 TLS；Flexible 要求源站讲明文 |
 | 开橙云后源站 IP 仍暴露 | 改记录类型时橙云开关被重置成灰云 | 用 API 建记录时显式带 `"proxied": true`；建完 `dig` 确认返回的是 Cloudflare 的 IP |
 | 浏览器报 CORS 错误 | `allowed_origins` 里没有前端域名 | 在 `server.yaml` 里加上，重启 |
-| 浏览器报混合内容 | 后端是 http 而页面是 https | 见「域名、端口与 TLS」两条路径任选其一 |
+| 浏览器报混合内容 | 后端是 http 而页面是 https | 后端启用 HTTPS（见「域名、端口与 TLS」） |
 | 后端日志里所有访客是同一个 IP | 走了 Cloudflare 代理但没配 `trusted_proxies` | 加 `trusted_proxies: ["cloudflare"]` |
 | 限流形同虚设 | 直连暴露却配了 `trusted_proxies`，IP 可被伪造 | 清空 `trusted_proxies` |
+| 源站日志出现 `TLS handshake error ... EOF` | 多半是探测工具连上就断开，不是 Cloudflare | Cloudflare 握手失败会记成别的错误，且不会带 `EOF` |
 | B 站接口一律 412 | 出口 IP 被判为机房 IP | 确认流量确实从住宅 IP 出；VPS 上无解 |
 | B 站接口偶发 5xx | 上游限流或抖动 | 正常，缓存会回吐旧数据并标 `stale` |
 | 新一期发布后仍是旧数据 | `latest_ttl` 未到 | 最多等 5 分钟；也可调小该项 |

@@ -16,7 +16,10 @@
     "server:verify": "node scripts/verify-elf.mjs",
     "server:test": "node scripts/run-go-test.mjs",
     "server:check": "node scripts/verify-server.mjs",
-    "port:check": "node scripts/check-port.mjs"
+    "port:check": "node scripts/check-port.mjs",
+    "origin:check": "node scripts/check-origin-pull.mjs",
+    "cert:check": "node scripts/inspect-cert.mjs",
+    "cert:dump": "node scripts/dump-cert.mjs"
   },
   "dependencies": {
     "react": "19.3.0",

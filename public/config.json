@@ -5,7 +5,7 @@
 
   "_why_separate_hostname": "代理开关是按**主机名**生效的，不是按 IP。mc.tbpdt.top 上有 Minecraft / OpenList 这类非 HTTP 服务，它必须保持灰云（一旦橙云，Cloudflare 只会转发 80/443 的 HTTP，游戏连接就断了）。所以 HTTP API 单独用一个主机名。",
 
-  "apiBase": "https://api.tbpdt.top",
+  "apiBase": "https://api2.tbpdt.top",
 
   "_biliBase": "B 站接口地址。留空则跟随 apiBase（目前两者是同一个后端）",
   "biliBase": ""
