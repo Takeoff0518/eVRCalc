@@ -13,3 +13,14 @@ dist
 # 开发过程文档：需求原文与实施记录，不对外发布
 draft.md
 plan.md
+
+# ── Go 后端 ──────────────────────────────────────────────────────
+# 真实配置（server.example.yaml 是模板，要入库）
+server/server.yaml
+server/*.exe
+# Go 构建缓存与模块缓存（本机 D:\nodejs、%TEMP% 不可写，只能落在工作区）
+.gocache/
+.gomodcache/
+.gotmp/
+# 用 go mod vendor 后才会有
+server/vendor/

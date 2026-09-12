@@ -1,0 +1,94 @@
+# eVRCalc 后端配置模板
+#
+# 用法：
+#   cp server.example.yaml server.yaml     # 然后按需修改
+#   ./evrcalc-server --config server.yaml
+#   ./evrcalc-server --config server.yaml --check   # 只校验配置与上游连通性
+#
+# 说明：
+#   · 所有键都是可选的，缺省项走内置默认值（括号里就是默认值）
+#   · 未知键会**直接报错**而不是被静默忽略 —— 免得写错名字却以为生效了
+#   · server.yaml 已在 .gitignore 里（将来若要放密钥不会被提交）
+
+# 监听地址。写 ":9983" 表示监听所有网卡的 9983 端口。
+# 生产环境是 mc.tbpdt.top:9983 —— 那台机器上 ddns-go 负责把域名指向动态 IP。
+listen: ":9983"
+
+upstream:
+  # 周刊数据源。换域名或换路径只改这里，不用重新编译。
+  weekly: "https://www.evocalrank.com"
+  # B 站接口。注意这一项**必须从住宅 IP 出**：实测 Cloudflare Workers
+  # 等机房出口一律被 WAF 挡成 412，换个 serverless 也一样。
+  bilibili: "https://api.bilibili.com"
+  # 单次上游请求超时（10s）
+  timeout: "10s"
+  # 转发给上游的 User-Agent。B 站实测裸请求也能过，但带上更稳。
+  # user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+
+cache:
+  # 当期数据（latest.json）。一周一变，取短 TTL，配合 ETag 条件请求确认更新。
+  latest_ttl: "5m"
+  # 期号目录（info.json）
+  info_ttl: "30m"
+  # 已发布的历史期。**发布即冻结**，所以可以缓存很久，靠 ETag 复核。
+  rank_ttl: "24h"
+  # B 站六项数据，分钟级变化
+  bili_ttl: "90s"
+  # 上游挂掉后，仍允许回吐多旧的 B 站数据。
+  # 设成 0 表示不给过期数据、直接报错。
+  # 建议留大一点：给一份「稍旧的数字」远好过给一个报错。
+  bili_stale_ttl: "24h"
+  # b23.tv 短链解析结果，几乎不变
+  resolve_ttl: "1h"
+  # 离最新期多远以内仍按「当期」对待。
+  # 周刊一周一期，所以 48h 等于「只要最新一期」。
+  # 这个值很重要：新一期发布后 rank_data/N.json 第一次被请求时，
+  # 若直接按历史期给 24h TTL，它会在 24h 内不再更新。
+  rank_ttl_grace: "48h"
+  # ETag 条件请求的最小间隔，避免频繁 304 打上游
+  revalidate_min_interval: "5m"
+
+rate_limit:
+  # 每分钟允许的请求数，按客户端 IP 计。0 表示该类接口不限流。
+  # 周刊接口只是取静态 JSON，可以松一些。
+  weekly_per_minute: 60
+  # B 站接口才是有上游代价的（一条响应 118 KB + 消耗本机 IP 信誉），限严一些。
+  bili_per_minute: 20
+  # 令牌桶容量，允许的瞬时突发
+  burst: 10
+  # 停用多久的桶会被回收
+  bucket_idle_timeout: "10m"
+
+  # ── 可信代理（安全开关，别乱填）────────────────────────────────
+  # 只有当请求**确实来自这些来源**时，才会去读 real_ip_header。
+  # 填错的后果：任何人都能伪造 CF-Connecting-IP 绕过限流。
+  #
+  # 直连暴露（本机 9983 直接对外）→ 必须留空！
+  #
+  # 若将来把域名挂到 Cloudflare 代理（橙云）后面，改成：
+  #   trusted_proxies: ["cloudflare"]
+  # 也支持 "loopback"、"private" 或自定义 CIDR（如 "10.1.0.0/16"）。
+  trusted_proxies: []
+  real_ip_header: "CF-Connecting-IP"
+
+cors:
+  # 允许的来源白名单。前端在 GitHub Pages（evrc.tbpdt.top），
+  # 与后端跨域，所以必须明确放行。
+  #
+  # 注意：CORS **不是访问控制**，它只拦得住「别人的网页在浏览器里读我们的
+  # 响应」，拦不住 curl / python 爬虫。真正防刷靠 rate_limit。
+  allowed_origins:
+    - "https://evrc.tbpdt.top"
+    - "http://localhost:5173"   # 本地开发（vite dev server）
+    - "http://127.0.0.1:5173"
+  allowed_methods: ["GET", "OPTIONS"]
+  allowed_headers: ["content-type"]
+  max_age: "24h"
+
+log:
+  # debug / info / warn / error
+  level: "info"
+  # 是否记录每条请求（含耗时与客户端 IP）
+  access_log: true
+  # true 输出 JSON（便于日志采集），false 输出可读文本
+  json: false
