@@ -56,21 +56,61 @@ rate_limit:
 
 ### 2. 编译
 
+后端只有一个外部依赖（`gopkg.in/yaml.v3`），而且已经 **vendor 进仓库**，
+所以克隆下来就能构建，不需要访问 `proxy.golang.org`（该域名在国内常不可达）。
+
+**在目标机上直接编译**（需要装 Go）：
+
 ```bash
 cd server
-go build -o evrcalc-server .
+go build -o evrcalc-server .            # 产物约 5.9 MB
 ```
 
-只有一个外部依赖（`gopkg.in/yaml.v3`）。若目标机器拉不到模块，可以先用
-`go mod vendor` 把依赖收进 `vendor/`，之后构建就完全离线了。
-
-交叉编译到 Linux：
+**在 Windows 上交叉编译到 Linux**（推荐，目标机不用装 Go）：
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o evrcalc-server .
+npm run server:build            # 默认 linux/amd64
+npm run server:all              # 全部七个平台
+npm run server:verify           # 校验架构与链接方式（发上线前跑一次）
 ```
 
-### 3. 先自检，再启动
+或者直接用脚本，参数更灵活：
+
+```powershell
+.\server\build.ps1 linux-amd64      # Windows
+./server/build.sh linux-amd64       # Linux / macOS / Git Bash / WSL
+./server/build.sh all
+```
+
+可用目标：`linux-amd64`、`linux-arm64`、`linux-armv7`、`linux-386`、
+`windows-amd64`、`darwin-arm64`、`darwin-amd64`。
+
+产物在 `server/dist/`，文件名带平台后缀。
+
+`CGO_ENABLED=0` 让它成为**全静态链接**的二进制——不依赖 glibc 版本，
+所以 CentOS 7、Alpine、任何发行版都能直接跑，不需要在目标机上装任何东西。
+
+**先确认目标机架构**，编错了上去就是 `Exec format error`：
+
+```bash
+uname -m        # x86_64 → linux-amd64    aarch64 → linux-arm64    armv7l → linux-armv7
+```
+
+`npm run server:verify` 会把每个产物的架构与链接方式打出来，可以直接与
+`uname -m` 对照。
+
+### 3. 传到目标机
+
+```bash
+# 只传二进制，不需要传源码（依赖已编进二进制）
+scp server/dist/evrcalc-server-linux-amd64 user@host:/opt/evrcalc/evrcalc-server
+scp server/server.example.yaml            user@host:/opt/evrcalc/server.yaml
+ssh user@host 'chmod +x /opt/evrcalc/evrcalc-server'
+```
+
+记得改 `/opt/evrcalc/server.yaml` 里的 `cors.allowed_origins`。
+
+### 4. 先自检，再启动
 
 ```bash
 ./evrcalc-server --config server.yaml --check
@@ -93,7 +133,13 @@ GOOS=linux GOARCH=amd64 go build -o evrcalc-server .
 ./evrcalc-server --config server.yaml
 ```
 
-### 4. 让它常驻
+如果提示 `Permission denied`，是忘了加执行位（`scp` 不会保留它）：
+
+```bash
+chmod +x evrcalc-server
+```
+
+### 5. 让它常驻
 
 **Windows**（本机是 `ddns-go` 那一台）：
 
@@ -132,7 +178,7 @@ sudo systemctl enable --now evrcalc
 journalctl -u evrcalc -f
 ```
 
-### 5. 域名与端口
+### 6. 域名与端口
 
 `mc.tbpdt.top` 的 A 记录由 **`ddns-go`** 维护（家用宽带是动态 IP）。
 后端默认监听 `:9983`，所以访问地址形如 `https://mc.tbpdt.top:9983`。

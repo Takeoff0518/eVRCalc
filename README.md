@@ -84,8 +84,28 @@ npm run dev
 后端的完整接口自检：
 
 ```bash
-node scripts/verify-server.mjs                        # 默认打 127.0.0.1:9983
+npm run server:test                              # 后端 56 项 Go 测试
+npm run server:check                             # 打本机 127.0.0.1:9983 自检 60 项
 node scripts/verify-server.mjs https://mc.tbpdt.top:9983   # 也可以打线上
+```
+
+### 交叉编译到 Linux
+
+在 Windows 上编出 Linux 二进制，目标机不需要装 Go：
+
+```bash
+npm run server:build        # 默认 linux/amd64
+npm run server:all          # 全部七个平台
+npm run server:verify       # 校验架构与链接方式
+```
+
+产物在 `server/dist/`。因为是 `CGO_ENABLED=0` 的**全静态链接**，
+不依赖 glibc 版本，CentOS 7 或 Alpine 上都能直接跑。
+
+编之前先在目标机确认架构（编错就是 `Exec format error`）：
+
+```bash
+uname -m        # x86_64 / aarch64 / armv7l
 ```
 
 ## 后端
@@ -169,9 +189,12 @@ src/
   __fixtures__/            真实数据回归夹具（官网六期，共 180 条）
 server/                    Go 后端（周刊查询 + B 站解析 + 缓存 + 限流）
   server.example.yaml      配置模板（真实配置 server.yaml 不入库）
+  build.ps1 / build.sh     构建脚本（含交叉编译）
+  vendor/                  唯一的依赖 yaml.v3（327 KB，故意入库 → 可离线构建）
 scripts/verify-server.mjs  后端接口自检（60 项）
+scripts/verify-elf.mjs     交叉编译产物校验（架构 + 静态链接）
 scripts/verify-trim.mjs    裁剪字段与体积校验
-worker/index.js            早期的 Cloudflare Worker 实现（已停用，留作参考）
+worker/index.js            早期的 Cloudflare Worker 实现（已停用，留作回退）
 ```
 
 计算内核与网络完全解耦，因此可以独立测试。回归测试直接用官网六期榜单的真实数据

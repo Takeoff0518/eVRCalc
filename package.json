@@ -10,7 +10,12 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "server:build": "node scripts/build-server.mjs linux-amd64",
+    "server:build:all": "node scripts/build-server.mjs all",
+    "server:verify": "node scripts/verify-elf.mjs",
+    "server:test": "node scripts/run-go-test.mjs",
+    "server:check": "node scripts/verify-server.mjs"
   },
   "dependencies": {
     "react": "19.3.0",
