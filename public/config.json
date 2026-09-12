@@ -1,9 +1,11 @@
 {
   "_note": "运行时可改的 API 地址。改完刷新页面即生效，不需要重新构建或部署前端。留空则退回构建时的 VITE_API_BASE。",
 
-  "_why_no_port": "前端走 Cloudflare 代理：浏览器连 Cloudflare 边缘的 443，边缘再回源到家里的 8443。所以这里**不带端口号** —— 家里的 80/443 被运营商封了不影响，那是边缘的端口。",
+  "_why_no_port": "前端走 Cloudflare 代理：浏览器连 Cloudflare 边缘的 443，边缘再回源到家里。所以这里**不带端口号** —— 家里的 80/443 被运营商封了不影响，那是边缘的端口，不是你的。",
 
-  "apiBase": "https://mc.tbpdt.top",
+  "_why_separate_hostname": "代理开关是按**主机名**生效的，不是按 IP。mc.tbpdt.top 上有 Minecraft / OpenList 这类非 HTTP 服务，它必须保持灰云（一旦橙云，Cloudflare 只会转发 80/443 的 HTTP，游戏连接就断了）。所以 HTTP API 单独用一个主机名。",
+
+  "apiBase": "https://api.tbpdt.top",
 
   "_biliBase": "B 站接口地址。留空则跟随 apiBase（目前两者是同一个后端）",
   "biliBase": ""
