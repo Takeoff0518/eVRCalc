@@ -1,17 +1,12 @@
 /**
  * biliApi 的单元测试
  *
- * 重点覆盖「从榜单条目取查询标识」——这是「填入」按钮的地基，
- * 取错标识会安静地填进另一条视频的数据。
+ * 重点覆盖输入解析与取数的降级路径 —— 这些函数的铁律是「永不 throw」，
+ * 所以失败分支比成功分支更值得测。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  fetchBiliStats,
-  formatFetchedAt,
-  refFromVideo,
-  resolveBiliInput,
-} from '../lib/biliApi'
+import { fetchBiliStats, formatFetchedAt, resolveBiliInput } from '../lib/biliApi'
 import { __resetRuntimeConfig } from '../lib/runtimeConfig'
 
 beforeEach(() => {
@@ -37,35 +32,6 @@ function trackFetch(apiResponse: () => Response | Promise<Response>) {
   })
   return apiCalls
 }
-
-describe('refFromVideo', () => {
-  it('优先用 avid（周刊榜单里它总是存在）', () => {
-    expect(refFromVideo({ avid: 'av117207459697071', url: 'https://www.bilibili.com/video/BV1mKto6kEBQ' })).toEqual({
-      aid: 'av117207459697071',
-    })
-  })
-
-  it('avid 缺席时从 url 里找 BV 号', () => {
-    expect(refFromVideo({ url: 'https://www.bilibili.com/video/BV1mKto6kEBQ/' })).toEqual({
-      bvid: 'BV1mKto6kEBQ',
-    })
-  })
-
-  it('url 是 av 形态时提取数字部分', () => {
-    expect(refFromVideo({ url: 'https://www.bilibili.com/video/av117207459697071/' })).toEqual({
-      aid: '117207459697071',
-    })
-  })
-
-  it('两者都没有时返回空对象（调用方据此报错，而不是拿 undefined 去请求）', () => {
-    expect(refFromVideo({})).toEqual({})
-    expect(refFromVideo({ avid: '   ', url: '' })).toEqual({})
-  })
-
-  it('avid 有空白时会被 trim', () => {
-    expect(refFromVideo({ avid: ' av123 ' })).toEqual({ aid: 'av123' })
-  })
-})
 
 describe('formatFetchedAt', () => {
   it('把 RFC3339 转成 月-日 时:分', () => {
@@ -111,7 +77,7 @@ describe('fetchBiliStats', () => {
     danmaku: 3234,
   }
 
-  it('传 aid 时用 aid 参数（榜单「填入」走的就是这条路）', async () => {
+  it('传 aid 时用 aid 参数', async () => {
     const calls = stubFetch(sample)
     const res = await fetchBiliStats({ aid: 'av117207459697071' })
     expect(res.ok).toBe(true)

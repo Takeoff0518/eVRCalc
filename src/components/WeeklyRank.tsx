@@ -8,13 +8,19 @@
  * 仅使用最新一期数据。
  *
  * ── 布局说明（为什么长这样）──────────────────────────────────────
- * 早先的版本把相邻条目压成 10px 的小字、上下各两条，结果是「看不出自己在
- * 110 条里的位置感」。现在改成**锥形视野**：
+ * 当前所在位置**不用横线标出**，而是作为一行插进榜单里，与上下行完全同版式、
+ * 同列宽，只是整行换成绿色：
  *
- *   · 名次与得点用等宽数字右对齐，形成清晰的纵向对照列
- *   · 前方 4 条 + 后方 3 条，字号提到 12.5px（与正文同级，可读）
- *   · 在「你」的位置插一条分隔线，把"谁在你前面、谁在你后面"一眼分开
- *   · 得点低于榜尾时不显示空表，而是改为展示末尾 3 条并写明情况
+ *      65    19,880   ▸ 某曲目标题
+ *      —     19,420   你大约在这里      ← 绿色
+ *      66    19,050   ▸ 某曲目标题
+ *
+ * 用横线的版本有两个毛病，所以换掉了：
+ *   · 版式不一致，眼睛要在两种表达之间切换
+ *   · 排序方向的歧义无法消除 —— 榜单按名次升序排，于是横线之上是 65~68、
+ *     之下是 69~71，按「上面更靠前」的直觉去读会觉得顺序是乱的。
+ *     改成插入行之后，位置本身就说明了顺序，不必再解释
+ * 名次列填「—」而不是数字，避免与真实名次混淆。
  */
 
 import type { WeeklyVideo, WeeklyPeriod } from '../types/weekly'
@@ -22,10 +28,13 @@ import { SectionLabel } from './ScoreViz'
 
 const nf = new Intl.NumberFormat('en-US')
 
-/** 前方显示几条（名次更靠前 = 得点更高） */
+/** 当前行**之前**显示几条（名次更小 = 得点更高） */
 const AHEAD = 4
-/** 后方显示几条 */
+/** 当前行**之后**显示几条 */
 const BEHIND = 3
+
+/** 当前所在位置的整行颜色 */
+const YOU_COLOR = 'var(--color-total)'
 
 export interface WeeklyRankProps {
   period: WeeklyPeriod
@@ -34,13 +43,6 @@ export interface WeeklyRankProps {
   /** 数据来自缓存时的时间戳（0 表示来自网络） */
   fromCache: boolean
   cachedAt: number
-  /**
-   * 点击某条视频的「填入」时回调。
-   * 不传则不显示按钮 —— 后端不可用时调用方会省略它。
-   */
-  onFill?: (video: WeeklyVideo) => void
-  /** 正在取数的那条（用 avid 标识），用于把按钮切成「获取中…」 */
-  fillingAvid?: string
 }
 
 function formatCachedAt(ts: number): string {
@@ -50,41 +52,62 @@ function formatCachedAt(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-/** 合并主榜与续榜，按名次升序；名次缺失时用数组位置兜底 */
+/**
+ * 合并主榜与续榜，按名次升序；名次缺失时用数组位置兜底。
+ *
+ * 注意末尾那步 `{ ...x.video, rank: x.rank }` —— 早先直接返回 `x.video`，
+ * 于是**兜底算出来的 rank 被丢掉了**（只参与了排序），返回值里的 rank 仍是
+ * undefined。界面上因为到处写 `v.rank ?? 0` 而没暴露，但函数名承诺的
+ * 「名次缺失时兜底」并没有兑现。
+ */
 export function combineRanks(period: WeeklyPeriod): WeeklyVideo[] {
   const main = (period.main_rank ?? []).map((v, i) => ({ v, fallback: i + 1 }))
   const second = (period.second_rank ?? []).map((v, i) => ({ v, fallback: main.length + i + 1 }))
   return [...main, ...second]
     .map(({ v, fallback }) => ({ video: v, rank: v.rank ?? fallback }))
     .sort((a, b) => a.rank - b.rank)
-    .map((x) => x.video)
+    .map((x) => ({ ...x.video, rank: x.rank }))
 }
 
 /**
- * 单条榜单行：名次 / 得点 / 可点击标题 / 可选「填入」
+ * 单条榜单行：名次 / 得点 / 标题。
  *
- * 名次与得点固定宽度右对齐，纵向对齐后很容易比较「差多少分」——
+ * 名次与得点用固定宽度右对齐，纵向能直接比较「差多少分」——
  * 这是这一区最实际的用途。
+ *
+ * `youAreHere` 为真时渲染成绿色占位行：名次列一律是「—」，数字列是当前得点，
+ * 标题列是「你大约在这里」。
+ *
+ * 名次列为什么**一律用「—」**而不是印上真实名次：
+ *   · 位置已经由上方那行「大约位于 第 N 位」明确给出，再印一遍是重复
+ *   · 而且并非所有情况都有名次 —— 高于榜首（第 0 位）与低于榜尾（第 N+1 位）
+ *     本来就没有对应名次，印数字反而会与第 1 名 / 第 N 名重号
+ * 所以统一「—」，三种情况表现一致，不需要用户去分辨「这里为什么有时是数字」。
  */
 function RankRow({
   rank,
   video,
-  onFill,
-  filling,
+  youAreHere,
+  total,
 }: {
-  rank: number
-  video: WeeklyVideo
-  onFill?: (video: WeeklyVideo) => void
-  filling?: boolean
+  rank: number | '—'
+  video?: WeeklyVideo
+  youAreHere?: boolean
+  total?: number
 }) {
-  // 「填入」按钮只在鼠标悬停这一行时出现，避免每行都挂一个按钮把榜单读成表格。
-  // 正在取数的那行例外：必须一直可见，否则点了之后按钮消失、看不出在加载。
-  const canFill = Boolean(onFill)
+  const tint = youAreHere ? { color: YOU_COLOR } : undefined
+
   return (
-    <div className="group flex items-center gap-2.5 text-[12.5px] leading-[1.5]">
-      <span className="nums text-muted w-8 shrink-0 text-right">{rank}</span>
-      <span className="nums w-[76px] shrink-0 text-right">{nf.format(video.point)}</span>
-      {video.url ? (
+    <div className="flex items-center gap-2.5 text-[12.5px] leading-[1.5]">
+      <span className="nums text-muted w-8 shrink-0 text-right" style={tint}>
+        {youAreHere ? '—' : rank}
+      </span>
+      <span className="nums w-[76px] shrink-0 text-right" style={tint}>
+        {nf.format(Math.round(youAreHere ? (total ?? 0) : (video?.point ?? 0)))}
+      </span>
+      {youAreHere ? (
+        <span style={tint}>你大约在这里</span>
+      ) : video?.url ? (
         <a
           href={video.url}
           target="_blank"
@@ -95,65 +118,47 @@ function RankRow({
           {video.title}
         </a>
       ) : (
-        <span className="truncate" title={video.title}>
-          {video.title}
+        <span className="truncate" title={video?.title}>
+          {video?.title}
         </span>
       )}
-      {canFill ? (
-        <button
-          type="button"
-          disabled={filling}
-          onClick={() => onFill?.(video)}
-          title={`获取《${video.title}》的播放/点赞/收藏/硬币/评论/弹幕并填入`}
-          className={`btn-flat-xs shrink-0 ml-auto ${
-            filling ? 'btn-flat-xs-disabled opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
-          }`}
-        >
-          {filling ? '获取中' : '填入'}
-        </button>
-      ) : null}
     </div>
   )
 }
 
-/** 「你大约在这里」的分隔线 */
-function YouAreHere({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 py-0.5" aria-hidden="true">
-      <span className="h-px flex-1" style={{ background: 'var(--color-total)' }} />
-      <span className="text-[10px] shrink-0" style={{ color: 'var(--color-total)' }}>
-        {label}
-      </span>
-      <span className="h-px flex-1" style={{ background: 'var(--color-total)' }} />
-    </div>
-  )
-}
-
-export function WeeklyRank({
-  period,
-  total,
-  fromCache,
-  cachedAt,
-  onFill,
-  fillingAvid,
-}: WeeklyRankProps) {
+export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankProps) {
   const ranked = combineRanks(period)
 
-  // 「会排在第几」：得点严格大于某条 → 排在其前面
+  // 「会排在第几」：得点严格大于某条 → 排在其前面。
+  // 注意它可能**超出榜单长度**（得点低于榜尾时 = N+1）。
   const wouldRank = ranked.filter((v) => v.point > total).length + 1
   const inRank = wouldRank <= ranked.length
   const nearTop = wouldRank === 1 && ranked.length > 0
 
-  // 锥形视野：以当前名次为中心。前方取名次更小（得点更高）的那几条。
-  const aheadFrom = Math.max(0, wouldRank - 1 - AHEAD)
-  const ahead = ranked.slice(aheadFrom, Math.max(0, wouldRank - 1)).reverse()
-  const behind = inRank ? ranked.slice(wouldRank - 1, wouldRank - 1 + BEHIND) : []
+  // ── 取哪几条 ───────────────────────────────────────────────────
+  //
+  // 这一段连续踩过三个坑，都留在注释里：
+  //
+  // 1) `wouldRank` 可能超出榜单长度。不能直接拿它当参照点，否则切片会落到
+  //    榜单末尾那几条上，与「榜尾参照」重复渲染。所以先钳制。
+  // 2) 区间长度容易算错：`ref - 1` 已是当前行的**下标**，再减 AHEAD 得到的是
+  //    起点，长度就成了 AHEAD+1，多出的那条正好与 tail 重叠。
+  // 3) **低于榜尾时该拿哪几条作参照**。早先取的是「榜单末尾 BEHIND 条」——
+  //    但当得点远低于榜尾时（例如 1104 分对上游 12,881 分的榜尾），
+  //    拿榜尾当参照毫无意义：差着十倍。合理的是取**紧邻它上方**的那几条，
+  //    也就是榜单末尾往前推，让「差距」是有信息量的。
+  //
+  // 现在的取法（数组 0-indexed，ref = 当前行应插入的位置 = 当前名次）：
+  //   · 在榜内：前方 ranked[ref-1-AHEAD .. ref-1)，后方 ranked[ref-1 .. ref-1+BEHIND)
+  //   · 低于榜尾：占位行插在**榜单最末**（它低于所有条目），前方取末尾 AHEAD 条
+  const ref = Math.min(wouldRank, ranked.length)
 
-  // 低于榜尾时给末尾几条做参照，而不是留一片空白
-  const tail = !inRank ? ranked.slice(-BEHIND) : []
-  const tailFrom = ranked.length - tail.length + 1
+  const inList = inRank
+  const aheadEnd = inList ? ref - 1 : ranked.length
+  const ahead = ranked.slice(Math.max(0, aheadEnd - AHEAD), Math.max(0, aheadEnd))
+  const behind = inList ? ranked.slice(ref - 1, ref - 1 + BEHIND) : []
 
-  const hasRows = ahead.length > 0 || behind.length > 0 || tail.length > 0
+  const hasRows = ahead.length > 0 || behind.length > 0
 
   return (
     <div>
@@ -174,19 +179,19 @@ export function WeeklyRank({
           </span>
         </div>
 
-        {/* 结论行：得点与名次并排放大，这是这一区最该被一眼看到的东西 */}
+        {/* 结论行：把「第几位」明确写出来，不必靠数行数推断 */}
         <div className="mt-2.5 flex flex-wrap items-baseline gap-x-5 gap-y-2">
           <span className="flex items-baseline gap-2">
             <span className="text-[11px] text-muted">当前得点</span>
-            <span className="nums text-[22px] leading-none">{nf.format(Math.round(total))}</span>
+            <span className="nums text-[20px] leading-none">{nf.format(Math.round(total))}</span>
           </span>
           <span className="flex items-baseline gap-2">
             <span className="text-[11px] text-muted">大约位于</span>
             <span
-              className="nums text-[22px] leading-none"
-              style={{ color: inRank ? 'var(--color-total)' : 'var(--color-muted)' }}
+              className="nums text-[20px] leading-none"
+              style={{ color: inRank ? YOU_COLOR : 'var(--color-muted)' }}
             >
-              {inRank ? `第 ${wouldRank} 位` : `第 ${ranked.length} 位之后`}
+              {inRank ? `第 ${wouldRank} 位` : `第 ${ranked.length} 名之后`}
             </span>
           </span>
         </div>
@@ -197,39 +202,27 @@ export function WeeklyRank({
           </p>
         ) : null}
 
-        {/* 锥形视野 */}
+        {/* 榜单：当前所在位置作为一行插入，与上下行同版式 */}
         {hasRows ? (
           <div className="mt-3 border-t border-ink pt-2.5 flex flex-col gap-[3px]">
             {ahead.map((v) => (
               <RankRow key={`a-${v.avid}`} rank={v.rank ?? 0} video={v} />
             ))}
 
-            {inRank ? (
-              <YouAreHere label={`你大约在这里 · 第 ${wouldRank} 位`} />
-            ) : (
-              <YouAreHere label={`低于第 ${ranked.length} 名 · 以下是榜尾`} />
-            )}
+            {/* 占位行一律用「—」：位置由上方「大约位于 第 N 位」给出，
+                这里再印名次就是重复；而且高于榜首 / 低于榜尾本来就没有名次 */}
+            <RankRow rank="—" youAreHere total={total} />
 
-            {inRank
-              ? behind.map((v) => (
-                  <RankRow
-                    key={`b-${v.avid}`}
-                    rank={v.rank ?? 0}
-                    video={v}
-                    onFill={onFill}
-                    filling={Boolean(fillingAvid) && fillingAvid === v.avid}
-                  />
-                ))
-              : tail.map((v, i) => (
-                  <RankRow key={`t-${v.avid}`} rank={tailFrom + i} video={v} />
-                ))}
+            {behind.map((v) => (
+              <RankRow key={`b-${v.avid}`} rank={v.rank ?? 0} video={v} />
+            ))}
           </div>
         ) : null}
 
         <p className="text-[10px] text-muted mt-3 mb-0 leading-[1.7]">
           榜单共 <span className="nums">{ranked.length}</span> 条（第 1–30 名为主榜，
           第 31 名以后为续榜）。点击标题跳转到视频。
-          {onFill ? '点「填入」可获取该视频的实时数据并自动填进上方的输入框。' : ''}
+          {!inRank ? `当前得点低于第 ${ranked.length} 名，上方为榜单末尾几条作参照。` : ''}
         </p>
       </div>
     </div>

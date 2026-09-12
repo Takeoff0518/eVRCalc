@@ -15,7 +15,6 @@ import {
   describeError,
   explainFetchError,
   fetchBiliStats,
-  refFromVideo,
   resolveBiliInput,
   type BiliStats,
 } from './lib/biliApi'
@@ -59,7 +58,6 @@ export default function App() {
   const [biliStats, setBiliStats] = useState<BiliStats | undefined>()
   const [biliLoading, setBiliLoading] = useState(false)
   const [biliError, setBiliError] = useState<string | undefined>()
-  const [fillingAvid, setFillingAvid] = useState<string | undefined>()
   // 上一次的取数请求，供「重试」用
   const lastRequest = useRef<(() => void) | undefined>(undefined)
   // 后端地址，显示在报错信息里方便排查（异步读取，不阻塞渲染）
@@ -120,59 +118,40 @@ export default function App() {
 
   // ── 从 B 站获取六项数据 ────────────────────────────────────────
   /**
-   * 取数并填入。`avid` 用于把榜单里那一行的按钮切成「获取中」。
+   * 取数并填入。
    *
    * 失败时**只提示、不改动已有数据** —— 用户手填的数字不该被一次网络故障清掉。
    */
-  const loadBiliStats = useCallback(
-    async (ref: { bvid?: string; aid?: string }, avidForSpinner?: string) => {
-      setBiliLoading(true)
-      setBiliError(undefined)
-      setFillingAvid(avidForSpinner)
+  const loadBiliStats = useCallback(async (ref: { bvid?: string; aid?: string }) => {
+    setBiliLoading(true)
+    setBiliError(undefined)
 
-      let failure = ''
-      try {
-        const res = await fetchBiliStats(ref)
-        if (res.ok) {
-          const s = res.data
-          setBiliStats(s)
-          setStats({
-            play: s.play,
-            like: s.like,
-            favorite: s.favorite,
-            coin: s.coin,
-            comment: s.comment,
-            danmaku: s.danmaku,
-          })
-          return
-        }
-        failure = res.error
-      } catch (err) {
-        // fetchBiliStats 本身不抛异常，这里是兜底，防止将来改动引入意外
-        failure = describeError(err)
-      } finally {
-        setBiliLoading(false)
-        setFillingAvid(undefined)
-      }
-
-      setBiliError(await explainFetchError(failure))
-    },
-    [],
-  )
-
-  /** 榜单里点「填入」：榜单条目自带 avid，直接查，不需要先解析 */
-  const handleFillFromVideo = useCallback(
-    (video: WeeklyVideo) => {
-      const ref = refFromVideo(video)
-      if (!ref.bvid && !ref.aid) {
-        setBiliError('这条记录里没有可用的视频标识')
+    let failure = ''
+    try {
+      const res = await fetchBiliStats(ref)
+      if (res.ok) {
+        const s = res.data
+        setBiliStats(s)
+        setStats({
+          play: s.play,
+          like: s.like,
+          favorite: s.favorite,
+          coin: s.coin,
+          comment: s.comment,
+          danmaku: s.danmaku,
+        })
         return
       }
-      lastRequest.current = () => void loadBiliStats(ref, video.avid)
-      lastRequest.current()
-    },
-    [loadBiliStats],
-  )
+      failure = res.error
+    } catch (err) {
+      // fetchBiliStats 本身不抛异常，这里是兜底，防止将来改动引入意外
+      failure = describeError(err)
+    } finally {
+      setBiliLoading(false)
+    }
+
+    setBiliError(await explainFetchError(failure))
+  }, [])
 
   /** 粘贴框里点「获取」：先解析任意输入，再取数 */
   const handleFetchFromInput = useCallback(
@@ -299,8 +278,6 @@ export default function App() {
                 total={result.total}
                 fromCache={periodFromCache}
                 cachedAt={periodCachedAt}
-                onFill={handleFillFromVideo}
-                fillingAvid={fillingAvid}
               />
             ) : null}
           </div>

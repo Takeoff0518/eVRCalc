@@ -80,21 +80,6 @@ export async function resolveBiliInput(input: string): Promise<FetchResult<BiliR
   return fetchJson<BiliRef>(await biliUrl(`/api/bili/resolve?q=${encodeURIComponent(q)}`), BILI_TIMEOUT)
 }
 
-/** 从周刊榜单条目里取出可用的查询标识 */
-export function refFromVideo(video: { avid?: string; url?: string }): { bvid?: string; aid?: string } {
-  const avid = (video.avid ?? '').trim()
-  if (avid) return { aid: avid }
-
-  // 兜底：从 url 里找 BV 号
-  const m = (video.url ?? '').match(/BV[0-9A-Za-z]{10}/)
-  if (m) return { bvid: m[0] }
-
-  const av = (video.url ?? '').match(/av(\d+)/i)
-  if (av) return { aid: av[1] }
-
-  return {}
-}
-
 /** 把 RFC3339 时间格式化成「14:23」或「09-07 14:23」这样的短标签 */
 export function formatFetchedAt(iso: string): string {
   const t = Date.parse(iso)

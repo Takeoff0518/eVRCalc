@@ -1,7 +1,7 @@
 /**
  * 数据填写框 + 清空按钮
  *
- * 六项数据可以手动填写，也可以从 B 站获取（点「获取」或榜单里的「填入」）。
+ * 六项数据可以手动填写，也可以从 B 站获取（粘贴链接/号后点「获取」）。
  * 但**计算本身永远是纯客户端的** —— 后端不可用时手填照旧，功能不受影响。
  */
 
@@ -114,7 +114,7 @@ export function StatsForm({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') submit()
               }}
-              placeholder="粘贴视频链接 / BV 号 / av 号，或点下方榜单里的「填入」"
+              placeholder="粘贴视频链接 / BV 号 / av 号"
               className="min-w-0 flex-1 border border-ink bg-transparent px-2 py-1.5 text-[11px] outline-none focus:bg-ink focus:text-paper"
             />
             <button
