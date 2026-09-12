@@ -3,313 +3,315 @@
 ## 架构
 
 ```
-┌─────────────────────────────┐         ┌──────────────────────────────┐
-│  GitHub Pages                │  跨域   │  Cloudflare Worker           │
-│  https://evrc.tbpdt.top      │ ──────► │  https://api.tbpdt.top       │
-│  纯静态前端（无出网能力）      │  CORS   │  /api/weekly/*               │
-└─────────────────────────────┘         └──────────────┬───────────────┘
-                                                       │
-                                                       ▼
-                                            www.evocalrank.com
+┌─────────────────────────────┐         ┌───────────────────────────────────┐
+│  GitHub Pages                │  跨域   │  Go 后端（家里那台机器）            │
+│  https://evrc.tbpdt.top      │ ──────► │  https://mc.tbpdt.top:9983        │
+│  纯静态前端（无出网能力）      │  CORS   │  /api/weekly/*  /api/bili/*       │
+└─────────────────────────────┘         └───────────┬───────────┬───────────┘
+                                                    │           │
+                                                    ▼           ▼
+                                    www.evocalrank.com   api.bilibili.com
 ```
 
-**为什么必须有这个 Worker**：浏览器无法直连周刊接口。`www.evocalrank.com` 的 JSON
-接口从不返回 `Access-Control-Allow-Origin`，浏览器会**直接丢弃整个响应**——即使
-服务端返回了 200 与完整数据，JS 侧也只能看到 `TypeError: Failed to fetch`。
-注意这与"服务端是否校验来源"无关：实测该服务端并不看 `Origin` 头，问题纯在
-浏览器侧的读取授权。
+**为什么必须有这个后端**，两件事都做不到纯前端：
 
-Worker 出去取数，再为浏览器补上 CORS 响应头，顺带把响应裁剪到前端真正需要的字段。
-**跨域这件事已处理好**：所有响应（含错误响应）都带 `Access-Control-Allow-Origin`。
+1. **周刊接口**：`www.evocalrank.com` 的 JSON 接口从不返回 `Access-Control-Allow-Origin`，
+   浏览器会**直接丢弃整个响应**——即使服务端返回了 200 与完整数据，JS 侧也只能看到
+   `TypeError: Failed to fetch`。注意这与"服务端是否校验来源"无关：实测该服务端并不看
+   `Origin` 头，问题纯在浏览器侧的读取授权。
 
-**不含 B 站接口。**自动填充已确认不可行并移除，原因见 `README.md`
-「为什么没有 B 站自动填充」。
+2. **B 站接口**：它的 WAF 按**出口 IP** 判定。浏览器直连会被 `Origin` 检查挡成 403；
+   经 Cloudflare Workers 转发得到 **412**——逐个排除请求头差异后确认：住宅 IP 请求全部
+   200、Workers 请求 412，**差别只在出口 IP**。所以这一层必须跑在有住宅 IP 的机器上，
+   换任何 Serverless 都一样。
+
+后端出去取数，再为浏览器补上 CORS 响应头，顺带把响应裁剪到前端真正需要的字段。
+
+> **上一版**的周刊转发层是 Cloudflare Worker（`worker/index.js`）。统一到 Go 后端后它
+> 已停用，代码留在仓库里作参考与回退路径。
 
 ---
 
-## 一、部署 Worker（拿到 API 地址）
+## 一、部署后端
 
-### 1. 确认域名配置
-
-`wrangler.jsonc` 里只需这一行：
-
-```jsonc
-"routes": [{ "pattern": "api.tbpdt.top", "custom_domain": true }]
-```
-
-用 **Custom Domain** 而不是 Route：
-
-- Custom Domain 会**自动创建 DNS 记录并签发证书**
-- Route 只匹配已有流量、**不会创建 DNS 记录**，照抄 Route 写法会出现
-  `api.tbpdt.top` 解析不了（`ENOTFOUND`）的情况
-
-两个注意点：pattern 是**纯主机名**（不带 `/*`、不带路径）；该主机名下不能已存在
-CNAME 记录，否则创建失败。
-
-### 2. 部署
+### 1. 准备配置
 
 ```bash
-npx wrangler login     # 打开浏览器授权，只需一次
-npx wrangler deploy
+cd server
+cp server.example.yaml server.yaml
 ```
 
-`wrangler` 不在 `devDependencies` 里（它的 postinstall 会拉 workerd 二进制，
-会触发本机沙箱限制），用 `npx` 临时下载即可，功能不受影响。
+编辑 `server.yaml`，至少确认这几项：
 
-**部署前不需要先 build** —— Worker 已不依赖 `dist/`（前端由 Pages 托管）。
+```yaml
+listen: ":9983"                                 # 监听端口
 
-### 3. 验证 Worker
+cors:
+  allowed_origins:
+    - "https://evrc.tbpdt.top"                  # 前端域名，必须放行
+
+rate_limit:
+  trusted_proxies: []                           # 直连暴露时必须留空！
+```
+
+### 2. 编译
 
 ```bash
-node scripts/verify-trim.mjs      # 校验裁剪字段与体积（可选，不依赖 Worker）
+cd server
+go build -o evrcalc-server .
 ```
 
-再用浏览器或 curl 确认三个接口：
+只有一个外部依赖（`gopkg.in/yaml.v3`）。若目标机器拉不到模块，可以先用
+`go mod vendor` 把依赖收进 `vendor/`，之后构建就完全离线了。
 
-```
-https://api.tbpdt.top/api/weekly/latest
-https://api.tbpdt.top/api/weekly/info
-https://api.tbpdt.top/api/weekly/rank?n=735
-```
-
-预期结果：
-
-| 接口 | 状态 | 体积 | 内容 |
-|---|---|---|---|
-| `/api/weekly/latest` | 200 | ≈24 KB | `main_rank` 30 条 + `second_rank` 80 条 = **110 条** |
-| `/api/weekly/info` | 200 | ≈4 KB | 216 期期号（520–735） |
-| `/api/weekly/rank?n=735` | 200 | ≈24 KB | 同 latest |
-
-同时确认单个条目只有这些字段：
-`url, avid, title, point, rank, play, like, favorite, coin, comment, danmaku`
-（**不应**出现 `referSource` / `coverurl` / `pubdate` / `share`）。
-
----
-
-## 二、部署前端到 GitHub Pages
-
-### 1. 推送代码
+交叉编译到 Linux：
 
 ```bash
-git remote add origin https://github.com/Takeoff0518/eVRCalc.git
-git push -u origin main
+GOOS=linux GOARCH=amd64 go build -o evrcalc-server .
 ```
 
-### 2. ⚠️ 先启用 Pages（**必须先做，否则第一次构建就会失败**）
-
-仓库 → **Settings** → **Pages** → **Build and deployment** → **Source** 选
-**GitHub Actions**（不要选 "Deploy from a branch"）。
-
-**这一步不能省，也不能靠工作流自动完成。** 跳过的话 Actions 会在
-`actions/configure-pages@v5` 处失败：
-
-```
-Error: Get Pages site failed. Please verify that the repository has Pages enabled
-and configured to build using GitHub Actions... Error: Not Found
-```
-
-> 为什么不加 `enablement: true` 自动开启？官方 action 文档写明
-> "This option requires a token other than `GITHUB_TOKEN` to be provided" ——
-> 默认的 `GITHUB_TOKEN` 权限不足，加了只会把 404 变成 403，反而更难排查。
-
-启用后把失败的运行 **Re-run all jobs**，或推一个提交即可。
-
-工作流里已写入 `VITE_API_BASE: https://api.tbpdt.top`。
-**若换了 Worker 子域，必须同步改这一处**，否则线上前端会去请求
-`evrc.tbpdt.top/api/...`（那里没有 Worker），必然 404。
-
-### 3. 自定义域名 evrc.tbpdt.top
-
-**第一步：告诉 GitHub**
-
-仓库 → Settings → Pages → **Custom domain** 填 `evrc.tbpdt.top` → Save。
-
-**第二步：在 Cloudflare 加 DNS 记录**
-
-Cloudflare 面板 → `tbpdt.top` → **DNS** → Add record：
-
-| 字段 | 值 |
-|---|---|
-| Type | `CNAME` |
-| Name | `evrc` |
-| Target | `takeoff0518.github.io` |
-| Proxy status | **DNS only（灰云）** ← 必须 |
-
-⚠️ **必须选灰云。** 开成橙云时 Cloudflare 会接管 TLS，而 GitHub Pages 需要自己
-签发证书，两者冲突会导致证书错误或重定向循环。等证书签发完再考虑是否开橙云。
-
-> 对照：`api`（Worker）的 DNS 记录由 Custom Domain **自动创建**，
-> 而 `evrc`（Pages）的 DNS 记录**必须你手动加**。两个子域来源不同，容易混淆。
-
-**第三步：等待证书**
-
-Settings → Pages 里 Custom domain 旁出现 ✅，勾选 **Enforce HTTPS**。
-首次签发可能需要几分钟到几小时。
-
----
-
-## 三、部署后确认清单
-
-- [ ] `https://api.tbpdt.top/api/weekly/latest` 返回 200，110 条数据
-- [ ] `https://evrc.tbpdt.top/` 能打开，标题 `eVRCalc`，样式正常（五色 Box）
-- [ ] 手动填六项数据 → 得点算出、五类得点与四个修正正常显示
-- [ ] 右侧「完整计算逻辑」里当前分支有淡色底高亮
-- [ ] 周刊排名定位出现，名次与相邻条目标题可点击跳转
-- [ ] 得点明显高于 30 名水平时，位次能报出 **30 名以后**（验证续榜已生效）
-- [ ] 手机窄屏下右侧公式区下移、各 Box 转单列
-
-**如果周刊排名定位没出现**：F12 看 Network 里 `api.tbpdt.top/api/weekly/latest`
-的状态。若是 CORS 报错，说明 Worker 未部署新版；若是 404，检查 `VITE_API_BASE`。
-
----
-
-## 四、本地开发
+### 3. 先自检，再启动
 
 ```bash
-npx wrangler dev --port 8787    # 终端 1：本地 Worker
-npm run dev                     # 终端 2：Vite（已配好 proxy）
+./evrcalc-server --config server.yaml --check
 ```
 
-也可直接连线上 Worker：
+`--check` 会打印生效配置，并实际探一次两个上游。**这一步能提前发现最麻烦的问题**：
+如果 B 站那行报 412，说明当前出口 IP 已被判定为机房 IP，后面所有 B 站功能都不会通。
+
+```
+上游连通性：
+        最新期号 735
+  [OK]   周刊  https://www.evocalrank.com
+        探针 117207459697071 → 【沨漪原创】秦宣四方…（播放 516824）
+  [OK]   B 站  https://api.bilibili.com
+```
+
+确认无误后启动：
+
+```bash
+./evrcalc-server --config server.yaml
+```
+
+### 4. 让它常驻
+
+**Windows**（本机是 `ddns-go` 那一台）：
 
 ```powershell
-$env:VITE_API_BASE="https://api.tbpdt.top"; npm run dev
+# 用任务计划程序在开机时启动，或注册为服务
+sc.exe create evrcalc binPath= "C:\path\to\evrcalc-server.exe --config C:\path\to\server.yaml" start= auto
+sc.exe start evrcalc
 ```
 
-什么都不配也能跑 —— 联网功能自动降级，手动填写与计算完全可用。
+**Linux**（`/etc/systemd/system/evrcalc.service`）：
+
+```ini
+[Unit]
+Description=eVRCalc backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=evrcalc
+WorkingDirectory=/opt/evrcalc
+ExecStart=/opt/evrcalc/evrcalc-server --config /opt/evrcalc/server.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now evrcalc
+journalctl -u evrcalc -f
+```
+
+### 5. 域名与端口
+
+`mc.tbpdt.top` 的 A 记录由 **`ddns-go`** 维护（家用宽带是动态 IP）。
+后端默认监听 `:9983`，所以访问地址形如 `https://mc.tbpdt.top:9983`。
+
+**关于证书**：如果 DDNS 只做 DNS 解析、没有反代，那么 `https://…:9983` 需要
+后端自己持有证书，否则浏览器会拦。两种做法：
+
+- **推荐**：把子域挂到 Cloudflare 代理（橙云），回源端口设成 9983。
+  这样边缘有 TLS、有免费防护，回源端口不必是 443。
+  **注意**：走了代理之后，后端看到的对端 IP 是 Cloudflare 的，
+  要读真实客户端 IP 必须配置：
+  ```yaml
+  rate_limit:
+    trusted_proxies: ["cloudflare"]
+  ```
+  ⚠️ **不配这个，限流会把所有访客当成同一个 IP**；而如果**没有**走代理却配了它，
+  任何人都能伪造 `CF-Connecting-IP` 绕过限流。两者都会出问题，别弄错方向。
+
+- 或者用 Caddy / nginx 做本机反代并自动签 Let's Encrypt 证书。
+  注意家庭宽带常封 443，用非标准端口时 Let's Encrypt 的 HTTP-01 挑战需要 80 端口可达，
+  否则改用 DNS-01。
 
 ---
 
-## 五、后续更新
+## 二、部署前端
 
-```bash
-git add -A && git commit -m "..." && git push    # → Actions 自动构建部署 Pages
+前端仍是 GitHub Pages，由 `.github/workflows/deploy-pages.yml` 自动构建部署。
+
+工作流里已写入后端地址：
+
+```yaml
+env:
+  VITE_API_BASE: https://mc.tbpdt.top:9983
 ```
 
-Worker 改动需要单独部署（Pages 工作流不会碰 Worker）：
+**这是构建期变量**：改了它必须重新部署 Pages。而后端那边的上游地址、缓存 TTL、
+限流阈值全在 `server.yaml` 里，改那些**不需要**重新构建前端。
 
-```bash
-npx wrangler deploy
-```
+> ⚠️ 前提：仓库必须先在 **Settings → Pages → Source** 里选 "GitHub Actions"，
+> 否则工作流会在 `configure-pages` 步骤报 `Get Pages site failed ... Not Found`。
+> 这是一次性配置。
 
 ---
 
-## 六、排错速查
+## 三、部署后验证
+
+### 1. 后端接口自检
+
+```bash
+node scripts/verify-server.mjs http://127.0.0.1:9983          # 本机
+node scripts/verify-server.mjs https://mc.tbpdt.top:9983      # 线上
+```
+
+60 项检查，覆盖榜单完整性（110 条、名次连续）、路径穿越防护、B 站六项数据、
+CORS 白名单、压缩、限流。**这个脚本比 curl 逐条试快得多，出问题时它直接指出是哪一环。**
+
+### 2. 逐条确认
+
+```bash
+curl https://mc.tbpdt.top:9983/api/healthz
+curl https://mc.tbpdt.top:9983/api/weekly/latest | head -c 300
+curl "https://mc.tbpdt.top:9983/api/bili/stats?aid=av117207459697071"
+
+# 跨域：必须回显你的前端域名
+curl -i -H "Origin: https://evrc.tbpdt.top" https://mc.tbpdt.top:9983/api/weekly/info | grep -i access-control
+
+# 压缩：应看到 gzip
+curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest | grep -i content-encoding
+```
+
+### 3. 浏览器
+
+打开 `https://evrc.tbpdt.top/`，确认：
+
+- [ ] 标题右侧显示「第 735 期 · 在线」
+- [ ] 排名定位区出现 110 条可比对
+- [ ] 数据输入区出现粘贴框与「取回数据」按钮
+- [ ] 点排名区相邻条目的「填入」，六项数据被填入且显示「数据获取于 …」
+
+---
+
+## 四、故障排查
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
-| `api.tbpdt.top` 解析失败（ENOTFOUND） | 用了 Route 而非 Custom Domain，未建 DNS 记录 | 改为 `custom_domain: true` 重新部署 |
-| 域名根路径 404 | Pages 未启用或 Source 选错 | Settings → Pages → Source 选 GitHub Actions |
-| `Get Pages site failed` | Pages 未启用 | 同上 |
-| 前端样式/JS 全丢 | 产物未上传或 base 配置问题 | 确认 `vite.config.ts` 里 `base: './'`，重新构建 |
-| Pages 证书错误 / 重定向循环 | Cloudflare 橙云与 Pages 抢 TLS | DNS 记录改为**灰云** |
-| 周刊区块不显示 | 周刊接口失败 → 已按降级设计隐藏 | F12 Network 看状态码 |
-| 前端请求打到 `evrc.tbpdt.top/api/...` | 构建时漏了 `VITE_API_BASE` | 改工作流 env 后重新部署 |
-| 排名位次都卡在 30 以内 | Worker 或前端用了裁剪掉 second_rank 的旧版本 | 确认 Worker 返回 `second_rank` 且前端已部署新版 |
+| 浏览器报 CORS 错误 | `allowed_origins` 里没有前端域名 | 在 `server.yaml` 里加上，重启 |
+| 前端显示「周刊数据暂时取不到」 | 后端没起来，或解析不通 | 先 `--check`，再看后端日志 |
+| 后端日志里所有访客是同一个 IP | 走了 Cloudflare 代理但没配 `trusted_proxies` | 加 `trusted_proxies: ["cloudflare"]` |
+| 限流形同虚设 | 直连暴露却配了 `trusted_proxies`，IP 可被伪造 | 清空 `trusted_proxies` |
+| B 站接口一律 412 | 出口 IP 被判为机房 IP | 确认流量确实从住宅 IP 出；VPS 上无解 |
+| B 站接口偶发 5xx | 上游限流或抖动 | 正常，缓存会回吐旧数据并标 `stale` |
+| 新一期发布后仍是旧数据 | `latest_ttl` 未到 | 最多等 5 分钟；也可调小该项 |
+| 前端请求打到 `evrc.tbpdt.top/api/...` | 构建时漏了 `VITE_API_BASE` | 改工作流 env 后重新部署 Pages |
+| 证书错误 | 直接用了非标端口且无证书 | 见上文「域名与端口」 |
 
-Worker 实时日志：
+查看后端日志：
 
 ```bash
-npx wrangler tail
+journalctl -u evrcalc -f              # Linux
+# 或直接看进程输出（Windows 任务计划/服务的方式不同）
 ```
+
+把 `log.level` 调成 `debug` 可以看到每次缓存的命中情况。
 
 ---
 
 ## 附一：防刷与额度保护
 
-### 先纠正一个常见误解：CORS 不是访问控制
+### 先把认知摆正：CORS 不是访问控制
 
-`Access-Control-Allow-Origin` 只是**浏览器自愿遵守**的规则。爬虫用 `curl` /
-`python requests` 时完全不看这个头，照样拿到数据。实测本 Worker 对
-`Origin: null`、`Origin: https://evil.example.com` 都返回 `ACAO=*`，
-但**即使改成白名单，curl 也照样能取**。
+`Access-Control-Allow-Origin` 只是**浏览器自愿遵守**的规则。爬虫用
+`curl` / `python requests` 时完全不看这个头，照样拿到数据。
+所以把白名单收紧**挡不住刷量**，它只能阻止"别人的网页在浏览器里读我们的响应"。
 
-所以「只允许某个域名请求」防不住刷量，它只能阻止"别人的网页在浏览器里读我们的响应"。
-当前默认 `*` 是有意为之（见附二），换成白名单带来的防护是心理上的。
+真正有效的是下面两条：
 
-同样地，检查 `Origin` / `Referer` 也是无效的 —— 这些头都能任意伪造。
+### 1. 限流（`rate_limit`）
 
-### 真正有效的手段
+令牌桶，按「客户端 IP + 接口类别」分桶。周刊与 B 站分开计数——
+B 站那条才是有上游代价的（一条响应 118 KB + 消耗本机 IP 信誉），所以限得更严。
 
-**① 限流（已启用，实测有效）**
-
-`wrangler.jsonc` 里的 `ratelimits` 绑定：
-
-```jsonc
-"ratelimits": [
-  { "name": "RATE_LIMITER", "namespace_id": "1001",
-    "simple": { "limit": 30, "period": 60 } }
-]
+```yaml
+rate_limit:
+  weekly_per_minute: 60
+  bili_per_minute: 20
+  burst: 10
+  bucket_idle_timeout: "10m"
 ```
 
-**免费版可用。** 部署时会显示 `env.RATE_LIMITER (30 requests/60s)  Rate Limit`。
-实测快速连打时第 29 次请求开始返回 429，符合阈值设定。
+超限返回 **429** 并带 `Retry-After`。
 
-阈值取 30 次/分钟的理由：正常使用是「每次打开页面 1 个请求」，
-30 次/分钟（每 2 秒一次）对真人远远用不到，但足以挡住脚本。
+**取真实 IP 这条务必理解清楚**：只有在请求**确实来自 `trusted_proxies`** 时，
+才会去读 `real_ip_header`。否则任何人加一个 `CF-Connecting-IP` 请求头就能伪造 IP，
+把限流变成摆设。
 
-两个必须知道的限制（官方文档明确说明）：
+### 2. 缓存（`cache`）
 
-- 计数**按 Cloudflare 节点独立**：同一 IP 在不同节点各有额度。
-  因此它不是精确的全局限流，但能挡住绝大多数脚本。
-- `period` 只能是 10 或 60 秒。
+周刊数据一旦发布就冻结，所以缓存是这里最划算的防线：
 
-限流键用「国家 + 节点 + IP」组合。官方建议不要只按 IP 限流
-（移动网络下大量用户共用出口 IP），组合键可减轻误伤。
+| 数据 | 策略 | 说明 |
+|---|---|---|
+| 历史期 `rank_data/N.json` | 24h + ETag 条件请求 | 发布即冻结，没变时上游回 304 |
+| 当期 `latest.json` | 5m | 一周一变，短 TTL 足够 |
+| B 站六项数据 | 90s | 分钟级变化 |
+| B 站 stale 窗口 | 24h | 上游挂掉时回吐旧数据，标 `X-EvRCalc-Stale: 1` |
 
-**② 边缘缓存（已配置，但效果无法确证）**
+上游失败时**优先给旧数据 + 如实标注**，而不是给用户一个报错——
+给一份稍旧的数字远好过什么都没有。
 
-Worker 的 fetch 子请求默认**不缓存**，`cache-control` 只作用于浏览器。
-代码里已加 `cf: { cacheEverything: true, cacheTtl: <各接口 TTL> }`，
-意在让同一节点在 TTL 内只回上游一次。
+### 3. 额度会被刷光的后果
 
-实测情况：
+后端自带令牌桶，单 IP 被卡在 20~60 次/分钟；要真跑满需要多来源持续轮换。
+**真正被刷时的后果也只是接口暂时不可用**，前端会自动降级为纯手动计算
+（周刊排名区隐藏），站点不会崩。
 
-- 上游该接口**不发送 `cache-control`**（只有 etag），所以不存在上游头覆盖 TTL 的问题
-- 客户端读不到 `cf-cache-status` / `age`，无法直接证明命中
-- 延迟由首访 ~1300ms 稳定到 ~750ms，有改善但不足以断定是边缘缓存
+### 4. 加一层 WAF（可选）
 
-也就是说**这条可能生效、也可能没有**。若你希望确证，可以在 Cloudflare 面板看图表的
-"Requests to origin" 或开启 Workers Logs 观察。
-
-**③ 可选：Bot Fight Mode**
-
-Cloudflare 面板 → Security → Bots，免费计划包含基本的 Bot Fight Mode。
-开启后会对已知爬虫特征做挑战。对本项目是可选项。
-
-### 额度会被刷光的风险有多大
-
-即使不设防，单 IP 也被限流卡在 30 次/分钟；要在一天内跑满 100,000 次请求，
-需要持续多个来源轮换。**真正被刷光时的后果也只是当天该 API 不可用**，
-前端会自动降级为纯手动计算（周刊排名区隐藏），站点不会崩。
-
-### 实时监控
-
-```bash
-npx wrangler tail
-```
-
-或在面板 → Workers → evrcalc-api → Metrics 看请求量曲线。
-同时可以观察 429 的比例来判断是否有人在刷。
+若把子域挂到 Cloudflare 代理，可以在面板上再加一条 Rate Limiting 规则，
+在请求到达你家的机器之前就拦掉异常流量 —— 这对家用带宽尤其有价值。
 
 ---
 
 ## 附二：接口与缓存
 
-Worker（`https://api.tbpdt.top`）：
+后端（`https://mc.tbpdt.top:9983`）：
 
-| 路径 | 说明 | 缓存 | 体积 |
+| 路径 | 说明 | 缓存 | 响应体积 |
 |---|---|---|---|
-| `/api/weekly/latest` | 最新一期，110 条 | 600s | ≈24 KB |
-| `/api/weekly/info` | 期数目录，216 期 | 3600s | ≈4 KB |
-| `/api/weekly/rank?n=735` | 指定期数 | 86400s | ≈24 KB |
-
-**当前前端只调用 `/api/weekly/latest`**，`/info` 仅在网络失败回退缓存时用于取最新期号。
-`/rank` 为将来切换期数保留。
+| `/api/weekly/latest` | 最新一期，110 条 | 5m | ≈24 KB（gzip ≈8.9 KB） |
+| `/api/weekly/info` | 期数目录，216 期 | 30m | ≈4 KB |
+| `/api/weekly/rank?n=735` | 指定期数 | 24h | ≈24 KB |
+| `/api/bili/stats?bvid=` / `?aid=` | 单条视频六项数据 | 90s | ≈226 B |
+| `/api/bili/resolve?q=` | 链接/号 → 规范化标识 | 1h | ≈100 B |
+| `/api/bili/batch?bvid=a,b` | 批量（≤20 条） | 复用单条缓存 | — |
+| `/api/healthz` | 健康检查 | — | ≈60 B |
 
 ### 响应裁剪
 
-上游 `latest.json` 有 63.8 KB，其中大半用不到。Worker 只保留：
+上游 `latest.json` 有 63.8 KB，其中大半用不到。后端只保留：
 
 ```
 url, avid, title, point, rank, play, like, favorite, coin, comment, danmaku
@@ -320,25 +322,29 @@ url, avid, title, point, rank, play, like, favorite, coin, comment, danmaku
 
 | | 原始 | 裁剪后 | 省 |
 |---|---|---|---|
-| 未压缩 | 63.8 KB | 23.9 KB | **63%** |
-| gzip | 14.9 KB | 8.6 KB | **42%** |
+| 未压缩 | 63.8 KB | ≈24 KB | **63%** |
+| 本机实测 gzip | — | 8,898 B | **69%**（相对未压缩的 28,706 B） |
 
 `/api/weekly/info` 由 36 KB 降到 4 KB。
 
-**副作用**：Worker 与前端的数据形状耦合 —— 前端若需多要一个字段，要同步改
-`worker/index.js` 里的 `VIDEO_FIELDS` 并重新部署。当前规模下可接受。
+**B 站那一条更夸张**：`view` 接口在视频属于某个合集时会把整个合集塞进 `ugc_season`，
+拜年纪单品之类一条响应可达 118 KB（其中 113 KB 是合集展开），而后端只取
+`data.stat` 里的六个数字，响应降到约 **226 字节**。
 
-Cloudflare Workers 免费版 **100,000 请求/天**，本应用量级远远用不到。
+**副作用**：后端与前端的数据形状耦合 —— 前端若要新字段，需要同步改
+`server/weekly.go` 里的 `VIDEO_FIELDS` 并重启后端。
 
-## 附三：可选——收紧 CORS 来源
+## 附三：关于 CORS 白名单
 
-默认 `Access-Control-Allow-Origin: *`。若想只允许自己的前端域名，在
-Cloudflare 面板 → Worker → Settings → Variables 添加：
-
+```yaml
+cors:
+  allowed_origins:
+    - "https://evrc.tbpdt.top"
+    - "http://localhost:5173"     # 本地开发
 ```
-ALLOWED_ORIGIN = https://evrc.tbpdt.top
-```
 
-**但请先读附一**：CORS 头只影响浏览器，挡不住用 curl 的爬虫，
-所以这一步的防护意义有限，主要是"礼仪性"的。另外收紧后本地开发的
-`localhost` 会被浏览器拦截，需临时把 localhost 也加入，或本地开发时不带该变量。
+不认识的来源不会拿到 `Access-Control-Allow-Origin`，浏览器会阻止 JS 读取响应
+（但请求本身还是发出去并被执行了 —— 这正是 CORS 不是访问控制的意思）。
+
+本地开发其实**不需要**配 CORS：Vite 已把 `/api` 代理到后端（见 `vite.config.ts`），
+浏览器只看到同源请求。

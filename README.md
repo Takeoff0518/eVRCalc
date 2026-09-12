@@ -16,12 +16,14 @@
 - **完整计算逻辑**：右侧常驻公式原文，并高亮当前**实际命中**的公式分支
 - **周刊排名定位**：算出当前得点在最新一期周刊 110 条榜单中的大概位次，名次相邻的标题可点击跳转
 - **Top 1 叠加层**：以最新一期榜首为基准的对数刻度进度条，直观对比各项得点
+- **从 B 站一键取回数据**：粘贴视频链接 / BV 号 / av 号即可自动填入六项数据；
+  也可以直接点排名区里相邻条目的「填入」
 
-**网络不可用时不影响计算**——六项数据手动填写，得点计算、修正展示、公式说明全部照常工作，
-联网功能会自动隐藏并给出提示。
+**网络不可用时不影响计算**——六项数据随时可以手动填写，得点计算、修正展示、公式说明
+全部照常工作，联网功能会自动隐藏并给出提示。
 
-> 六项数据需在 B 站视频页手动查看后填写。为什么不自动获取，见下方
-> [「为什么没有 B 站自动填充」](#为什么没有-b-站自动填充)。
+**关于取回的数据**：它是**时点快照**，与官方 `point` 存在约 0.1% 的固有偏差
+（原因见下方「关于精度」）。界面上会标出数据的获取时间，而不是假装它是实时的。
 
 ## 计分规则
 
@@ -52,7 +54,7 @@
 
 ## 技术栈
 
-React 19 · TypeScript · Vite · TailwindCSS v4 · Vitest · Cloudflare Workers
+React 19 · TypeScript · Vite · TailwindCSS v4 · Vitest · Go（自托管后端）
 
 界面为 Y2K 原始极简风格：1px 实线细边框、完全扁平、单色底，彩色只来自五类得点的官方配色。
 
@@ -61,57 +63,115 @@ React 19 · TypeScript · Vite · TailwindCSS v4 · Vitest · Cloudflare Workers
 ```bash
 npm install
 npm run dev          # http://localhost:5173
-npm test             # 62 项测试
+npm test             # 84 项前端测试
 npm run build        # 产物在 dist/
 ```
 
-仅前端即可运行全部计算功能。若要使用联网功能（周刊排名定位与叠加层），
-需要同时提供一个 API 代理（原因见下节）：
+仅前端即可运行全部计算功能。若要使用联网功能（周刊排名定位、叠加层、从 B 站取回数据），
+需要同时把后端跑起来：
 
 ```bash
-npx wrangler dev --port 8787    # 终端 1
-npm run dev                     # 终端 2（Vite 已配好 proxy）
+# 终端 1：Go 后端（默认监听 :9983，见 server/server.example.yaml）
+cd server
+cp server.example.yaml server.yaml
+go run . --config server.yaml --check    # 先自检配置与上游连通性
+go run . --config server.yaml
+
+# 终端 2：前端（Vite 已配好 proxy，默认转发到 127.0.0.1:9983）
+npm run dev
 ```
 
-## 为什么需要一个 API 代理
+后端的完整接口自检：
 
-本工具是纯静态前端，但**浏览器无法直连周刊接口**（已实测确认）：
-`www.evocalrank.com` 的 JSON 接口**从不返回 `Access-Control-Allow-Origin`**，
-浏览器会直接丢弃整个响应——即使服务端返回了 200 与完整数据，JS 侧也只能看到
-`TypeError: Failed to fetch`，连状态码都读不到。注意这与"服务端是否校验来源"无关：
-实测该服务端并不看 `Origin` 头，问题纯在浏览器侧的读取授权。
+```bash
+node scripts/verify-server.mjs                        # 默认打 127.0.0.1:9983
+node scripts/verify-server.mjs https://mc.tbpdt.top:9983   # 也可以打线上
+```
 
-因此需要一个转发层：`worker/index.js` 是一个约 130 行的 Cloudflare Worker，
-它代浏览器取数并补上 CORS 响应头。它同时会把响应裁剪到前端真正需要的字段
-（`latest.json` 由 63.8 KB 降到 23.9 KB，省 63%）。
+## 后端
 
-部署方式见 [`DEPLOY.md`](./DEPLOY.md)。
+后端是一个 Go 服务，同时提供周刊查询与 B 站数据解析。
+**所有可调项都在 YAML 里**，改完重启进程即可，不需要重新编译，也不需要重新构建前端：
 
-## 为什么没有 B 站自动填充
+```yaml
+listen: ":9983"
 
-六项数据需要手动填写。自动获取尝试过三种方案，全部失败：
+upstream:
+  weekly: "https://www.evocalrank.com"
+  bilibili: "https://api.bilibili.com"
 
-| 方案 | 结果 |
+cache:
+  latest_ttl: "5m"        # 当期数据，一周一变
+  rank_ttl: "24h"         # 已发布的历史期，发布即冻结
+  bili_ttl: "90s"         # B 站六项数据
+  bili_stale_ttl: "24h"   # 上游挂掉后仍允许回吐多久的旧数据
+
+rate_limit:
+  weekly_per_minute: 60
+  bili_per_minute: 20
+  trusted_proxies: []     # 直连暴露时必须留空，否则可伪造 IP 绕过限流
+
+cors:
+  allowed_origins:
+    - "https://evrc.tbpdt.top"
+```
+
+完整配置项见 [`server/server.example.yaml`](./server/server.example.yaml)。
+
+### 接口
+
+| 接口 | 说明 |
 |---|---|
-| 浏览器直连 `api.bilibili.com` | ❌ 该接口对非 bilibili 域名的 `Origin` 直接返回 **403**，连 CORS 阶段都到不了 |
-| 经 Cloudflare Worker 转发 | ❌ Worker 出网不带 `Origin` 后，得到 **412**。逐个排除请求头差异（UA / Accept-Language / Sec-Fetch-* / 完全裸请求）后确认：本机住宅 IP 请求全部 200，Worker 请求 412 —— **差别只在出口 IP**，即 WAF 拒绝数据中心 IP，换任何 Serverless 都一样 |
-| bookmarklet（在 B 站页面上同源抓取） | ⚠️ 技术上可行，但安装方式是"把一个 `javascript:` 链接拖到书签栏"，而 **React 19 出于安全会拦截 `<a href="javascript:...">`**，拖拽安装无法实现；改为手动新建书签又过于繁琐 |
+| `GET /api/weekly/info` | 期号目录 |
+| `GET /api/weekly/latest` | 最新一期（裁剪后的完整 110 条榜单） |
+| `GET /api/weekly/rank?n=<期号>` | 指定期数 |
+| `GET /api/bili/stats?bvid=` 或 `?aid=` | 单条视频的六项数据 |
+| `GET /api/bili/resolve?q=<任意输入>` | 链接 / BV 号 / av 号 / b23 短链 → 规范化标识 |
+| `GET /api/bili/batch?bvid=a,b` | 批量查询（最多 20 条，服务端并发；留给将来的批量填充） |
+| `GET /api/healthz` | 健康检查 |
 
-公共 CORS 代理也全部不可用（实测 17 个候选：超时、需 API key、已停服或被 WAF 拦截）。
-综合下来，手动填写是唯一稳定可行的方式。
+## 为什么需要一个后端
+
+两件事都做不到纯前端：
+
+1. **周刊接口**：`www.evocalrank.com` 的 JSON 接口**从不返回 `Access-Control-Allow-Origin`**。
+   浏览器会直接丢弃整个响应——即使服务端返回了 200 与完整数据，JS 侧也只能看到
+   `TypeError: Failed to fetch`，连状态码都读不到。注意这与"服务端是否校验来源"无关：
+   实测该服务端并不看 `Origin` 头，问题纯在浏览器侧的读取授权。
+
+2. **B 站接口**：它的 WAF 按**出口 IP** 判定。实测浏览器直连会被 `Origin` 检查挡成 403；
+   经 Cloudflare Workers 转发后得到 **412**——逐个排除请求头差异（UA / Accept-Language /
+   Sec-Fetch-* / 完全裸请求）后确认：住宅 IP 请求全部 200，Workers 请求 412，
+   **差别只在出口 IP**，即 WAF 拒绝数据中心 IP，换任何 Serverless 都一样。
+
+所以这一层必须跑在一台有住宅 IP 的机器上，也就顺理成章地把周刊查询一并接了过来
+（早先周刊走 Cloudflare Worker，现已统一到这个后端）。
+
+### B 站数据为什么能省下 98% 的流量
+
+`/x/web-interface/view` 会在视频属于某个合集时**把整个合集塞进 `ugc_season`**——
+拜年纪单品之类一条响应能到 118 KB，其中 113 KB 是合集展开。而本工具只需要
+`data.stat` 里六个数字，因此服务端解析、裁剪后再返回，响应降到约 **226 字节**。
+
+（注意上游客服把「评论」字段命名为 `reply` 而不是 `comment`，这个映射写错的话
+界面会安静地填错数字。）
 
 ## 项目结构
 
 ```
 src/
-  calc/score.ts          计算内核（纯函数，无网络依赖）
-  calc/scale.ts          对数刻度与进度条换算
-  lib/api.ts             取数层（永不抛异常 + 超时 + 降级）
-  lib/cachedFetch.ts     周刊数据缓存（Cache Storage）
-  components/            界面组件（WeeklyRank 内含排名合并逻辑与测试）
-  __fixtures__/          真实数据回归夹具（官网六期，共 180 条）
-worker/index.js          Cloudflare Worker 转发层（含响应裁剪）
-scripts/verify-trim.mjs  部署前校验裁剪字段与体积的小工具
+  calc/score.ts            计算内核（纯函数，无网络依赖）
+  calc/scale.ts            对数刻度与进度条换算
+  lib/api.ts               周刊取数层（永不抛异常 + 超时 + 降级）
+  lib/biliApi.ts           B 站取数层
+  lib/cachedFetch.ts       周刊数据缓存（Cache Storage）
+  components/              界面组件（WeeklyRank 内含排名合并逻辑与测试）
+  __fixtures__/            真实数据回归夹具（官网六期，共 180 条）
+server/                    Go 后端（周刊查询 + B 站解析 + 缓存 + 限流）
+  server.example.yaml      配置模板（真实配置 server.yaml 不入库）
+scripts/verify-server.mjs  后端接口自检（60 项）
+scripts/verify-trim.mjs    裁剪字段与体积校验
+worker/index.js            早期的 Cloudflare Worker 实现（已停用，留作参考）
 ```
 
 计算内核与网络完全解耦，因此可以独立测试。回归测试直接用官网六期榜单的真实数据
@@ -120,6 +180,11 @@ scripts/verify-trim.mjs  部署前校验裁剪字段与体积的小工具
 **一个容易踩的坑**：周刊官网把榜单切成两段存放——`main_rank` 是第 1~30 名，
 `second_rank` 是第 31~110 名，**两段合起来才是完整榜单**。只读前者会让所有得分
 都被报在 30 名以内。
+
+**另一个**：`av号 → BV号` 的换算在各处流传的参考实现里口径不一，`draft.md` 里的
+Kotlin 版与早先那版 TypeScript 版都是错的，对 `av2` 给出 `BVc1147x1xmD`
+（正确值是 `BV1xx411c7mD`）。它的输出依然"看起来像"合法 BV 号，所以错了很久没被发现。
+现改用官方文档的实现，并用 B 站接口返回的 `bvid` 交叉验证。
 
 ## 数据来源
 

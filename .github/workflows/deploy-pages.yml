@@ -35,10 +35,14 @@ jobs:
         run: npm test
 
       - name: Build
-        # API 在 Cloudflare 的另一个子域，必须显式指定；
-        # 留空会走相对路径，线上会 404。
+        # 后端跑在家里那台机器上（Go 服务），前端在 GitHub Pages，两者跨域，
+        # 所以必须显式指定地址；留空会走相对路径，线上会 404。
+        #
+        # 注意这是**构建期**变量：改了它必须重新部署 Pages。
+        # 后端那边的上游地址、缓存 TTL、限流阈值都在 server/server.yaml 里，
+        # 改那些不需要重新构建前端。
         env:
-          VITE_API_BASE: https://api.tbpdt.top
+          VITE_API_BASE: https://mc.tbpdt.top:9983
         run: npm run build
 
       # ⚠️ 前提：仓库必须先在 Settings → Pages → Source 里选 "GitHub Actions"。

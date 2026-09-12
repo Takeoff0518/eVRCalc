@@ -1,13 +1,19 @@
 /**
- * eVRCalc API 转发层 —— Cloudflare Worker
+ * eVRCalc 同源代理 —— Cloudflare Worker
  *
+ * ⚠️ 已停用（2026-09）。周刊查询已迁移到 `server/`（Go 后端），
+ *    前端不再指向 https://api.tbpdt.top。
+ *
+ * 之所以保留这份代码：它是一份实测有效的参考实现，也是万一 Go 后端那台机器
+ * 长期不可用时的回退路径 —— 把前端构建时的 VITE_API_BASE 指回这里、
+ * 重新 `npx wrangler deploy` 即可恢复周刊功能（B 站那半边搬不回来，
+ * 因为 WAF 拒绝机房 IP）。
+ *
+ * ── 原始说明 ──────────────────────────────────────────────────────
  * 存在的唯一原因：浏览器无法直连周刊接口。
  *   www.evocalrank.com 的 JSON 接口从不返回 Access-Control-Allow-Origin，
  *   浏览器会直接丢弃整个响应（即使服务端返回 200 与完整数据）。
  *   实测：带 Origin 请求返回 200 但无 ACAO，且服务端并不校验 Origin。
- *
- * 前端部署于 GitHub Pages（evrc.tbpdt.top），本 Worker 在另一个子域，
- * 两者跨域，因此这里必须主动补上 CORS 响应头。
  *
  * ── 关于「只允许某个域名请求」（重要认知）──────────────────────────
  * CORS 响应头**不是访问控制**，它只是浏览器自愿遵守的规则：
@@ -24,7 +30,7 @@
  *   · 逐个排除请求头差异（UA / Accept-Language / Sec-Fetch-* / 裸请求）
  *     后确认：本机住宅 IP 请求全部 200，Worker 请求 412 —— 差别只在出口 IP
  *   即「WAF 拒绝数据中心 IP」，不是请求特征问题，换任何 Serverless 都一样。
- * 因此 B 站数据改由用户手动填写（见 README）。
+ * 结论：B 站数据只能从住宅 IP 取，因此由 server/ 里的 Go 后端承担。
  */
 
 const UA =

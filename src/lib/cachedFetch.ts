@@ -5,7 +5,7 @@
  * - 周刊 JSON 有 60~70 KB，Cache Storage 存 Response 更自然，无 5MB 字符串配额压力
  * - 以**期号**为键，因此换期自动失效，无需手动清理
  *
- * 降级目标（plan.md §4）：Worker 离线时优先回退到缓存，让周刊功能在断网状态下也能用。
+ * 降级目标（plan.md §4）：后端离线时优先回退到缓存，让周刊功能在断网状态下也能用。
  */
 
 const CACHE_NAME = 'evrcalc-weekly-v1'

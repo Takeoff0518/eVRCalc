@@ -16,11 +16,15 @@ const DEFAULT_TIMEOUT = 5000
 /**
  * API 基地址。
  *
- * 前端部署在 GitHub Pages（evrc.tbpdt.top），API 是 Cloudflare 上的另一个
- * 子域，两者**跨域**，所以生产构建时必须由 `VITE_API_BASE` 指定 Worker 地址；
- * 否则默认走相对路径（本地开发由 Vite proxy 转发，同源）。
+ * 前端部署在 GitHub Pages（evrc.tbpdt.top），后端跑在家里那台机器上
+ * （Go 服务，形如 mc.tbpdt.top:9983），两者**跨域**，所以生产构建时必须由
+ * `VITE_API_BASE` 指定后端地址；否则默认走相对路径（本地开发由 Vite proxy
+ * 转发，同源）。
  *
- * 例：VITE_API_BASE=https://api.tbpdt.top
+ * 例：VITE_API_BASE=https://mc.tbpdt.top:9983
+ *
+ * 注意这是构建期变量。后端那边的上游地址、缓存 TTL、限流阈值全在
+ * server/server.yaml 里，调整那些不需要重新构建前端。
  */
 const API_BASE = (import.meta.env.VITE_API_BASE ?? '').replace(/\/+$/, '')
 

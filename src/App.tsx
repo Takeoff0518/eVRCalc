@@ -3,14 +3,20 @@
  *
  * 设计要点（见 plan.md）：
  * - 计算内核是纯客户端的，**永远不依赖网络**
- * - 联网只用于周刊相关功能：排名定位、Top1 叠加层
+ * - 联网用于周刊相关功能（排名定位、Top1 叠加）与「从 B 站取回数据」
  * - 只获取最新一期周刊
- * - 六项数据由用户手动填写
+ * - 六项数据既可手动填写，也可从 B 站取回；后端离线时手填照旧
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { calculateScore } from './calc/score'
 import { fetchWeeklyInfo, fetchWeeklyLatest } from './lib/api'
+import {
+  fetchBiliStats,
+  refFromVideo,
+  resolveBiliInput,
+  type BiliStats,
+} from './lib/biliApi'
 import { loadPeriodWithCache } from './lib/cachedFetch'
 import type { RawStats, WeeklyPeriod, WeeklyVideo } from './types/weekly'
 import { StatsForm } from './components/StatsForm'
@@ -45,6 +51,14 @@ export default function App() {
   const [periodLoading, setPeriodLoading] = useState(true)
 
   const [notice, setNotice] = useState<NoticeState | undefined>()
+
+  // ── B 站取数状态 ────────────────────────────────────────────────
+  const [biliStats, setBiliStats] = useState<BiliStats | undefined>()
+  const [biliLoading, setBiliLoading] = useState(false)
+  const [biliError, setBiliError] = useState<string | undefined>()
+  const [fillingAvid, setFillingAvid] = useState<string | undefined>()
+  // 后端是否可用。首次失败后置为 false，界面上就不再多显示一个注定失败的按钮。
+  const [biliAvailable, setBiliAvailable] = useState(true)
 
   const resultRef = useRef<HTMLDivElement | null>(null)
 
@@ -93,6 +107,86 @@ export default function App() {
   }, [])
 
   const handleClear = useCallback(() => setStats(EMPTY_STATS), [])
+
+  // ── 从 B 站取回六项数据 ────────────────────────────────────────
+  /**
+   * 取数并填入。`avid` 用于把榜单里那一行的按钮切成「获取中」。
+   *
+   * 失败时**只提示、不改动已有数据** —— 用户手填的数字不该被一次网络故障清掉。
+   */
+  const loadBiliStats = useCallback(
+    async (ref: { bvid?: string; aid?: string }, avidForSpinner?: string) => {
+      setBiliLoading(true)
+      setBiliError(undefined)
+      setFillingAvid(avidForSpinner)
+
+      const res = await fetchBiliStats(ref)
+      setBiliLoading(false)
+      setFillingAvid(undefined)
+
+      if (!res.ok) {
+        setBiliError(res.error)
+        // 连不上后端时收起取数区块，避免一直给用户一个注定失败的入口
+        if (/HTTP 5\d\d|网络请求失败|请求超时|Failed to fetch/i.test(res.error)) {
+          setBiliAvailable(false)
+        }
+        return
+      }
+
+      const s = res.data
+      setBiliStats(s)
+      setBiliAvailable(true)
+      setStats({
+        play: s.play,
+        like: s.like,
+        favorite: s.favorite,
+        coin: s.coin,
+        comment: s.comment,
+        danmaku: s.danmaku,
+      })
+    },
+    [],
+  )
+
+  /** 榜单里点「填入」：榜单条目自带 avid，直接查，不需要先解析 */
+  const handleFillFromVideo = useCallback(
+    (video: WeeklyVideo) => {
+      const ref = refFromVideo(video)
+      if (!ref.bvid && !ref.aid) {
+        setBiliError('这条记录里没有可用的视频标识')
+        return
+      }
+      void loadBiliStats(ref, video.avid)
+    },
+    [loadBiliStats],
+  )
+
+  /** 粘贴框里点「取回数据」：先解析任意输入，再取数 */
+  const handleFetchFromInput = useCallback(
+    async (input: string) => {
+      setBiliLoading(true)
+      setBiliError(undefined)
+
+      const resolved = await resolveBiliInput(input)
+      if (!resolved.ok) {
+        setBiliLoading(false)
+        setBiliError(resolved.error)
+        if (/HTTP 5\d\d|网络请求失败|请求超时|Failed to fetch/i.test(resolved.error)) {
+          setBiliAvailable(false)
+        }
+        return
+      }
+
+      setBiliLoading(false)
+      const { bvid, aid } = resolved.data
+      if (!bvid && !aid) {
+        setBiliError('没能从输入里识别出视频')
+        return
+      }
+      await loadBiliStats({ bvid, aid })
+    },
+    [loadBiliStats],
+  )
 
   const topValues: TopValues | undefined = useMemo(() => {
     if (!period) return undefined
@@ -153,6 +247,11 @@ export default function App() {
               onChange={(patch) => setStats((cur) => ({ ...cur, ...patch }))}
               onCalculate={handleCalculate}
               onClear={handleClear}
+              biliStats={biliStats}
+              biliLoading={biliLoading}
+              biliError={biliError}
+              onBiliFetch={handleFetchFromInput}
+              biliAvailable={biliAvailable}
             />
 
             <div ref={resultRef}>
@@ -177,6 +276,8 @@ export default function App() {
                 total={result.total}
                 fromCache={periodFromCache}
                 cachedAt={periodCachedAt}
+                onFill={biliAvailable ? handleFillFromVideo : undefined}
+                fillingAvid={fillingAvid}
               />
             ) : null}
           </div>

@@ -24,3 +24,6 @@ server/*.exe
 .gotmp/
 # 用 go mod vendor 后才会有
 server/vendor/
+
+# 无头浏览器截图与 DOM dump（本地视觉验证用）
+.shots/

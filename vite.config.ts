@@ -3,13 +3,16 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// 本地开发时，/api 走 dev proxy 打到 wrangler dev（127.0.0.1:8787）。
-// 浏览器只看到同源请求，因此本地也能跑通联网功能。
-// changeOrigin 会把 Host 改掉，浏览器发出的 Origin 不会传到 Worker，
-// 于是 Worker 出网请求不带 Origin —— 正是绕开 B 站 WAF 的关键。
+// 本地开发时，/api 走 dev proxy 打到后端，浏览器只看到同源请求，
+// 因此本地也能跑通联网功能，且不需要配 CORS。
 //
-// 若你已部署 Worker，也可以把 target 直接指向线上域名，无需本地 worker。
-const API_TARGET = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8787'
+// 默认目标是本地跑起来的 Go 后端（server/server.yaml 里 listen: ":9983"）。
+// 也可以指向线上：
+//   $env:VITE_API_TARGET="https://mc.tbpdt.top:9983"; npm run dev
+//
+// 注意 changeOrigin 会把 Host 改掉，浏览器发出的 Origin 不会透传到后端 ——
+// 这正是 B 站 WAF 放行的关键（它拒绝带非 bilibili Origin 的请求）。
+const API_TARGET = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:9983'
 
 export default defineConfig({
   // 相对基路径：当前部署在自定义域名根路径（evrc.tbpdt.top）下两种写法都可用，
@@ -27,7 +30,9 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    // .tsx 也要收：WeeklyRank.test.tsx 用 renderToStaticMarkup 验证
+    // 「填入」按钮的渲染位置
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'tests/**/*.test.ts'],
     // 本机沙箱禁止通过命名管道派生进程（spawn EPERM），
     // 默认的 forks 池无法启动，因此改用单线程、不隔离的线程池。
     pool: 'threads',

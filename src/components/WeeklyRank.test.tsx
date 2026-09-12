@@ -7,7 +7,8 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { combineRanks } from './WeeklyRank'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { WeeklyRank, combineRanks } from './WeeklyRank'
 import type { WeeklyPeriod, WeeklyVideo } from '../types/weekly'
 
 function makeVideo(rank: number, point: number): WeeklyVideo {
@@ -125,5 +126,70 @@ describe('排名定位逻辑（原先被 30 名上限截断的场景）', () => 
     const r = wouldRank(1000)
     expect(r).toBe(111)
     expect(r).toBeGreaterThan(ranked().length)
+  })
+})
+
+/**
+ * 「填入」按钮的渲染测试。
+ *
+ * 用 renderToStaticMarkup（react-dom/server）而不是 jsdom：
+ * 只关心输出里有没有按钮、在哪几行，不需要真实 DOM 与事件模拟，
+ * 也就不必为此引入 jsdom 与 testing-library。
+ */
+describe('「填入」按钮', () => {
+  const render = (total: number, onFill?: (v: WeeklyVideo) => void) =>
+    renderToStaticMarkup(
+      <WeeklyRank period={makePeriod()} total={total} fromCache={false} cachedAt={0} onFill={onFill} />,
+    )
+
+  const countFill = (html: string) => (html.match(/>填入</g) ?? []).length
+
+  it('不传 onFill 时一个按钮都不渲染（后端不可用时的降级）', () => {
+    const html = render(996_500)
+    expect(countFill(html)).toBe(0)
+    expect(html).not.toContain('可取回该视频的实时数据')
+  })
+
+  it('传了 onFill 时，当前名次下方的两条各有一个按钮', () => {
+    // 得点 996500 → 第 5 位；下方显示第 5、6 名两条
+    const html = render(996_500, () => {})
+    expect(countFill(html)).toBe(2)
+    expect(html).toContain('可取回该视频的实时数据')
+  })
+
+  it('上方的参考行不带按钮（它们只用于看差距）', () => {
+    // 第 5 位 → 上方显示第 3、4 名两条（灰色参考），下方两条可填
+    const html = render(996_500, () => {})
+    const rows = html.split('border-t border-ink pt-2 flex flex-col gap-1')[1] ?? ''
+    const rowCount = (rows.match(/flex items-baseline gap-2 text-\[10px\]/g) ?? []).length
+    expect(rowCount).toBe(4) // 2 上 + 2 下
+    expect(countFill(rows)).toBe(2) // 只有下方两个有按钮
+  })
+
+  it('比榜首还高 → 下方两条都有按钮', () => {
+    const html = render(2_000_000, () => {})
+    expect(countFill(html)).toBe(2)
+  })
+
+  it('低于榜尾 → 只显示上方的灰色参考行，无可填项', () => {
+    const html = render(1000, () => {})
+    expect(countFill(html)).toBe(0)
+    // 但仍应显示提示，说明功能存在
+    expect(html).toContain('可取回该视频的实时数据')
+  })
+
+  it('正在取数的那个条目显示「获取中」而不是「填入」', () => {
+    const html = renderToStaticMarkup(
+      <WeeklyRank
+        period={makePeriod()}
+        total={996_500}
+        fromCache={false}
+        cachedAt={0}
+        onFill={() => {}}
+        fillingAvid="av100005"
+      />,
+    )
+    expect(html).toContain('>获取中<')
+    expect(countFill(html)).toBe(1) // 另一条仍是「填入」
   })
 })

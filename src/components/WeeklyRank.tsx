@@ -20,6 +20,13 @@ export interface WeeklyRankProps {
   /** 数据来自缓存时的时间戳（0 表示来自网络） */
   fromCache: boolean
   cachedAt: number
+  /**
+   * 点击某条视频的「填入」时回调。
+   * 不传则不显示按钮 —— 后端不可用时调用方会省略它。
+   */
+  onFill?: (video: WeeklyVideo) => void
+  /** 正在取数的那条（用 avid 标识），用于把按钮切成「获取中…」 */
+  fillingAvid?: string
 }
 
 function formatCachedAt(ts: number): string {
@@ -39,15 +46,19 @@ export function combineRanks(period: WeeklyPeriod): WeeklyVideo[] {
     .map((x) => x.video)
 }
 
-/** 单条参考行：名次 / 得点 / 可点击标题 */
+/** 单条参考行：名次 / 得点 / 可点击标题 / 可选「填入」 */
 function RankRefRow({
   rank,
   video,
   muted,
+  onFill,
+  filling,
 }: {
   rank: number
   video: WeeklyVideo
   muted?: boolean
+  onFill?: (video: WeeklyVideo) => void
+  filling?: boolean
 }) {
   return (
     <div className="flex items-baseline gap-2 text-[10px]">
@@ -68,11 +79,29 @@ function RankRefRow({
           {video.title}
         </span>
       )}
+      {onFill ? (
+        <button
+          type="button"
+          disabled={filling}
+          onClick={() => onFill(video)}
+          title={`取回《${video.title}》的播放/点赞/收藏/硬币/评论/弹幕并填入`}
+          className={`btn-flat-xs shrink-0 ml-auto ${filling ? 'btn-flat-xs-disabled' : ''}`}
+        >
+          {filling ? '获取中' : '填入'}
+        </button>
+      ) : null}
     </div>
   )
 }
 
-export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankProps) {
+export function WeeklyRank({
+  period,
+  total,
+  fromCache,
+  cachedAt,
+  onFill,
+  fillingAvid,
+}: WeeklyRankProps) {
   const ranked = combineRanks(period)
 
   // 「会排在第几」：得点严格大于某条 → 排在其前面
@@ -132,7 +161,13 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
               />
             ))}
             {below.map((v, i) => (
-              <RankRefRow key={`b-${v.avid}`} rank={wouldRank + i} video={v} />
+              <RankRefRow
+                key={`b-${v.avid}`}
+                rank={wouldRank + i}
+                video={v}
+                onFill={onFill}
+                filling={Boolean(fillingAvid) && fillingAvid === v.avid}
+              />
             ))}
           </div>
         ) : null}
@@ -140,6 +175,7 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
         <p className="text-[10px] text-muted mt-2 mb-0 leading-[1.6]">
           榜单共 <span className="nums">{ranked.length}</span> 条可比对（第 1–30 名为主榜，
           第 31 名以后为续榜）。点击标题可跳转到对应视频。
+          {onFill ? '点「填入」可取回该视频的实时数据并自动填进上方的输入框。' : ''}
           <br />
           官方 point 为采集窗口时点快照，与本工具实时数据存在约 0.1% 偏差。
         </p>
