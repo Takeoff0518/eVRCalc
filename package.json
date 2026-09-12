@@ -15,7 +15,8 @@
     "server:build:all": "node scripts/build-server.mjs all",
     "server:verify": "node scripts/verify-elf.mjs",
     "server:test": "node scripts/run-go-test.mjs",
-    "server:check": "node scripts/verify-server.mjs"
+    "server:check": "node scripts/verify-server.mjs",
+    "port:check": "node scripts/check-port.mjs"
   },
   "dependencies": {
     "react": "19.3.0",

@@ -3,15 +3,23 @@
  *
  * 铁律（plan.md §4 决策 4）：**永不 throw，永不阻塞首屏**。
  * - 统一返回 { ok, data?, error? }，调用方永远不需要 try/catch
- * - 5 秒超时，不自动重试
- * - Worker 未上线时，本模块的所有调用都会快速失败，界面据此静默降级
+ * - 超时后放弃，不自动重试
+ * - 后端未上线时，本模块的所有调用都会快速失败，界面据此静默降级
  */
 
 import type { InfoJson, WeeklyPeriod } from '../types/weekly'
 
 export type FetchResult<T> = { ok: true; data: T } | { ok: false; error: string }
 
-const DEFAULT_TIMEOUT = 5000
+/**
+ * 默认超时。
+ *
+ * 12 秒（而不是 5 秒）是实测调出来的：走 Cloudflare 代理时多了一跳回源，
+ * 而周刊上游的首次请求（缓存没命中）在本机实测就要 4.6 秒，再叠加边缘到家里
+ * 的往返，5 秒会偶发超时。取数失败是**静默降级**（界面只显示"取不到"），
+ * 所以宁可等久一点，也不要让用户看到本可避免的失败。
+ */
+const DEFAULT_TIMEOUT = 12000
 
 /**
  * API 基地址。

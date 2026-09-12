@@ -35,14 +35,16 @@ jobs:
         run: npm test
 
       - name: Build
-        # 后端跑在家里那台机器上（Go 服务），前端在 GitHub Pages，两者跨域，
-        # 所以必须显式指定地址；留空会走相对路径，线上会 404。
+        # 后端跑在家里（Go 服务），前端在 GitHub Pages，两者跨域。
         #
-        # 注意这是**构建期**变量：改了它必须重新部署 Pages。
-        # 后端那边的上游地址、缓存 TTL、限流阈值都在 server/server.yaml 里，
-        # 改那些不需要重新构建前端。
+        # 地址**不带端口号**：走 Cloudflare 代理，浏览器连边缘的 443，
+        # 边缘再回源到家里的 8443。家里的 80/443 被运营商封了不影响 ——
+        # 那是 Cloudflare 边缘的端口，不是你的。
+        #
+        # 这只是**构建期兜底值**。日常要改地址请改 public/config.json，
+        # 那是运行时读取的，刷新页面即生效，不用重新部署 Pages。
         env:
-          VITE_API_BASE: https://mc.tbpdt.top:9983
+          VITE_API_BASE: https://mc.tbpdt.top
         run: npm run build
 
       # ⚠️ 前提：仓库必须先在 Settings → Pages → Source 里选 "GitHub Actions"。
