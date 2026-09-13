@@ -175,7 +175,7 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
             第 <span className="nums font-bold">{period.ranknum}</span> 期
           </span>
           <span className="text-[10px] text-muted">
-            采集窗口 {period.collect_start_time} — {period.collect_end_time}
+            {period.collect_start_time} — {period.collect_end_time}
           </span>
         </div>
 
@@ -183,7 +183,9 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
         <div className="mt-2.5 flex flex-wrap items-baseline gap-x-5 gap-y-2">
           <span className="flex items-baseline gap-2">
             <span className="text-[11px] text-muted">当前得点</span>
-            <span className="nums text-[20px] leading-none">{nf.format(Math.round(total))}</span>
+            <span className="nums text-[20px] leading-none"
+            style={{ color: YOU_COLOR }}
+            >{nf.format(Math.round(total))}</span>
           </span>
           <span className="flex items-baseline gap-2">
             <span className="text-[11px] text-muted">大约位于</span>
@@ -198,7 +200,7 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
 
         {nearTop ? (
           <p className="text-[11px] mt-2 mb-0" style={{ color: 'var(--color-play)' }}>
-            高于本期榜首，下方为其后的名次，仅作参照。
+            高于本期榜首。
           </p>
         ) : null}
 
@@ -220,9 +222,8 @@ export function WeeklyRank({ period, total, fromCache, cachedAt }: WeeklyRankPro
         ) : null}
 
         <p className="text-[10px] text-muted mt-3 mb-0 leading-[1.7]">
-          榜单共 <span className="nums">{ranked.length}</span> 条（第 1–30 名为主榜，
-          第 31 名以后为续榜）。点击标题跳转到视频。
-          {!inRank ? `当前得点低于第 ${ranked.length} 名，上方为榜单末尾几条作参照。` : ''}
+          榜单共 <span className="nums">{ranked.length}</span> 条（第 1–30 名为主榜，第 31 名以后为副榜）。点击标题跳转到视频。
+          {/* {!inRank ? `当前得点低于第 ${ranked.length} 名，上方为榜单末尾几条作参照。` : ''} */}
         </p>
       </div>
     </div>

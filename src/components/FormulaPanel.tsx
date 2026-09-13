@@ -177,6 +177,7 @@ function buildGroups(result?: ScoreResult): Group[] {
       blocks: [
         {
           label: '修正 A',
+          cap: corr?.a.max,
           formula:
             '((基础播放得点 + 收藏) / (基础播放得点 + 收藏 + (弹幕 + 评论) * 20)) ^ 2',
         },
