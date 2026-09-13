@@ -112,7 +112,7 @@ export function PointBoxes({ result, top, topLabel }: PointBoxesProps) {
 
   return (
     <div>
-      <SectionLabel note={top ? `叠加层 = √(本视频 / ${topLabel ?? 'Top 1'})` : undefined}>
+      <SectionLabel>
         得点明细
       </SectionLabel>
 
