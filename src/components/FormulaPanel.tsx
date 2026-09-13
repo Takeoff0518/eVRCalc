@@ -247,27 +247,6 @@ export function FormulaPanel({ result }: { result?: ScoreResult }) {
             </div>
           </div>
         ))}
-
-        <div>
-          <div className="text-[10px] tracking-[0.1em] text-muted uppercase mb-1">变量对照</div>
-          <div className="border border-ink px-2.5 py-2">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px]">
-              {VAR_MAP.map(([cn, en]) => (
-                <div key={en} className="flex items-baseline justify-between">
-                  <span>{cn}</span>
-                  <span className="nums text-muted">{en}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="border border-ink px-2.5 py-2">
-          <div className="text-[10px] tracking-[0.1em] text-muted uppercase mb-1">计算与显示精度</div>
-          <p className="text-[11px] leading-[1.7] m-0">
-            计算过程内部保持全精度，仅在显示时保留两位小数。
-          </p>
-        </div>
       </div>
     </div>
   )
