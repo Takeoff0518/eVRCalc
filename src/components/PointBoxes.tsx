@@ -71,7 +71,7 @@ function OverlayStrip({
   )
 }
 
-export function PointBoxes({ result, top, topLabel }: PointBoxesProps) {
+export function PointBoxes({ result, top }: PointBoxesProps) {
   const items: ItemDef[] = [
     {
       key: 'play',

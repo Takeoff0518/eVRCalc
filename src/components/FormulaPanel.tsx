@@ -125,14 +125,14 @@ function BlockView({ block, branches }: { block: Block; branches: BranchSet }) {
   )
 }
 
-const VAR_MAP = [
-  ['播放', 'play'],
-  ['点赞', 'like'],
-  ['收藏', 'favorite'],
-  ['硬币', 'coin'],
-  ['评论', 'comment'],
-  ['弹幕', 'danmaku'],
-]
+// const VAR_MAP = [
+//   ['播放', 'play'],
+//   ['点赞', 'like'],
+//   ['收藏', 'favorite'],
+//   ['硬币', 'coin'],
+//   ['评论', 'comment'],
+//   ['弹幕', 'danmaku'],
+// ]
 
 function buildGroups(result?: ScoreResult): Group[] {
   const corr = result?.corrections
