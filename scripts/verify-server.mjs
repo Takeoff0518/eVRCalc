@@ -190,6 +190,17 @@ async function main() {
     const refU = await jsonOf(resU)
     check('resolve 能解析完整链接（带 query）', refU?.bvid === bvid, `实际 ${resU.status} ${JSON.stringify(refU)}`)
 
+    // 线上真实故障回归：从 B 站 App「复制链接」得到的是「标题 + 空格 + 链接」，
+    // 早期实现把整段文字丢给 url.Parse，得到空 Host，于是判为无法识别 → 404。
+    const shareText = `【【洛天依原创】线条与色彩丨致仍手握画笔的你】 https://www.bilibili.com/video/BV1UVtb6PENV/?share_source=copy_web&vd_source=701f14b1944b350b54b777bd57dbd0eb`
+    const resShare = await getWithBackoff(`/api/bili/resolve?q=${encodeURIComponent(shareText)}`)
+    const refShare = await jsonOf(resShare)
+    check(
+      'resolve 能解析分享文案（标题 + 空格 + 链接）',
+      refShare?.bvid === 'BV1UVtb6PENV',
+      `实际 ${resShare.status} ${JSON.stringify(refShare)}`,
+    )
+
     const resA = await getWithBackoff(`/api/bili/resolve?q=${encodeURIComponent(`https://www.bilibili.com/video/${avid}/`)}`)
     const refA = await jsonOf(resA)
     check('resolve 能解析 av 形态链接', normAid(refA?.aid) === normAid(avid), JSON.stringify(refA))

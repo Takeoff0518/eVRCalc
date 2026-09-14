@@ -14,7 +14,7 @@
  */
 
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 
@@ -35,6 +35,13 @@ const env = {
   // proxy.golang.org 在本机不可达；走镜像。已经 vendor 过的话用不上
   GOPROXY: process.env.GOPROXY ?? 'https://goproxy.cn,direct',
   GOSUMDB: process.env.GOSUMDB ?? 'off',
+}
+
+// 目录必须自己建：这几个目录被手工清掉（或首次克隆）时，go 只会报
+// "creating work dir: The system cannot find the file specified"，
+// 看不出是缺目录。踩过一次，别再踩。
+for (const dir of [env.GOCACHE, env.GOMODCACHE, env.GOTMPDIR]) {
+  mkdirSync(dir, { recursive: true })
 }
 
 const args = process.argv.slice(2)

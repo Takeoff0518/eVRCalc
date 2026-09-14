@@ -70,7 +70,7 @@ go build -o evrcalc-server .            # 产物约 5.9 MB
 
 ```bash
 npm run server:build            # 默认 linux/amd64
-npm run server:all              # 全部七个平台
+npm run server:build:all        # 全部七个平台
 npm run server:verify           # 校验架构与链接方式（发上线前跑一次）
 ```
 
@@ -410,9 +410,9 @@ curl -i -H "Accept-Encoding: gzip" https://mc.tbpdt.top:9983/api/weekly/latest |
 打开 `https://evrc.tbpdt.top/`，确认：
 
 - [ ] 标题右侧显示「第 735 期 · 在线」
-- [ ] 排名定位区出现 110 条可比对，且中间的绿色分隔线标出当前位置
+- [ ] 排名定位区出现 110 条可比对，且绿色占位行标出当前位置
 - [ ] 数据输入区出现粘贴框与「获取」按钮
-- [ ] 点排名区条目的「填入」（悬停才出现），六项数据被填入且显示「数据获取于 …」
+- [ ] 粘贴 B 站 App 里复制的「标题 + 链接」整段，六项数据被填入且显示「数据获取于 …」
 
 ---
 

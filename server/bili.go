@@ -50,6 +50,11 @@ var (
 	b23Re    = regexp.MustCompile(`(?i)^(https?://)?b23\.tv/`)
 	bvidFmt  = regexp.MustCompile(`^BV[0-9A-Za-z]{10}$`)
 	aidFmt   = regexp.MustCompile(`^\d{1,20}$`)
+	// 从一段文字里找链接：B 站 App 的「复制链接」会把标题一起复制过来，
+	// 所以必须在一整段文字里找，不能只当"整段就是一个链接"去解析。
+	// 域名部分故意写得宽松（什么域名都先匹配上），可信与否交给 hostAllowed，
+	// 免得把「哪些域名算数」写死在正则里、日后改白名单时忘了同步。
+	linkRe = regexp.MustCompile(`(?i)(?:https?://)?(?:[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\.)+[a-z]{2,}(?::\d{1,5})?(?:/[^\s"'<>()\[\]{}，。、；：！？（）【】《》「」]*)?`)
 )
 
 // firstGroup 模拟 JS 的 `m[1] ?? m[0]`
@@ -63,7 +68,8 @@ func firstGroup(m []string) string {
 	return m[0]
 }
 
-// ParseBiliRef 解析任意输入：BV 号 / av 号 / 纯数字 / 完整链接 / 短链。
+// ParseBiliRef 解析任意输入：BV 号 / av 号 / 纯数字 / 完整链接 / 短链，
+// 以及「标题 + 空格 + 链接」这种直接从 B 站 App 复制出来的分享文案。
 // 短链在此**不**做网络解析，只标记 kind=shortlink，由调用方决定是否跟跳。
 func ParseBiliRef(input string) BiliRef {
 	raw := strings.TrimSpace(input)
@@ -83,37 +89,36 @@ func ParseBiliRef(input string) BiliRef {
 		return BiliRef{Raw: raw, Aid: raw, Kind: "avid"}
 	}
 
+	// 输入本身就是短链时在这里收口；链接混在文字里（"标题 https://b23.tv/x"）
+	// 则由下面的循环接住。两处都依赖 b23Re 不锚定串首 —— 一旦把 ^ 加回去，
+	// 「https://b23.tv/xxx」就会漏判成普通链接，进而被当成无法识别。
 	if b23Re.MatchString(raw) {
 		return BiliRef{Raw: raw, Kind: "shortlink"}
 	}
 
-	// 输入"本身就是链接"时，域名必须可信 ——
-	// 否则 https://evil.example/watch/BV1JHZNBdEQv 会被顺路解析出 BV 号，
-	// 让本接口变成替任意站点做跳板。外国域名在这里就直接判无效，不再宽松提取。
-	inputIsURL := looksLikeURL(raw)
-
-	if u, ok := parseLooseURL(raw); ok {
-		if !inputIsURL || hostAllowed(u.Host) {
-			pathAndQuery := u.Path
-			if u.RawQuery != "" {
-				pathAndQuery += "?" + u.RawQuery
-			}
-
-			if m := bvRe.FindStringSubmatch(pathAndQuery); m != nil {
-				return BiliRef{Raw: raw, Bvid: m[0], Kind: "url-bvid"}
-			}
-			if m := bvidQRe.FindStringSubmatch(pathAndQuery); m != nil {
-				return BiliRef{Raw: raw, Bvid: firstGroup(m), Kind: "url-bvid"}
-			}
-			if m := avRe.FindStringSubmatch(pathAndQuery); m != nil {
-				return BiliRef{Raw: raw, Aid: firstGroup(m), Kind: "url-avid"}
-			}
-			if m := aidQRe.FindStringSubmatch(pathAndQuery); m != nil {
-				return BiliRef{Raw: raw, Aid: firstGroup(m), Kind: "url-avid"}
-			}
+	// 输入里带链接时，**只认可信域名的那个链接**；同一段文字里混进来的其他
+	// 域名一概不看。这样既拦得住 https://evil.example/watch/BV1JHZNBdEQv，
+	// 也认得 B 站 App「复制链接」那种「标题 + 空格 + 真链接」的形态。
+	for _, candidate := range linkRe.FindAllString(raw, -1) {
+		link, ok := prettyLink(candidate)
+		if !ok {
+			continue
+		}
+		u, err := url.Parse(link)
+		if err != nil || u.Host == "" || !hostAllowed(u.Host) {
+			continue // 不可信的候选直接丢弃，绝不让它借道
+		}
+		if b23Re.MatchString(link) {
+			// 短链要做网络跟跳，交给调用方决定
+			return BiliRef{Raw: raw, Kind: "shortlink"}
+		}
+		if ref, ok := refFromURL(link); ok {
+			ref.Raw = raw
+			return ref
 		}
 	}
 
+	inputIsURL := looksLikeURL(raw)
 	if inputIsURL {
 		// 是链接但不是 B 站域名 —— 到这儿为止，不做兜底提取
 		return BiliRef{Raw: raw, Kind: "invalid"}
@@ -130,25 +135,53 @@ func ParseBiliRef(input string) BiliRef {
 	return BiliRef{Raw: raw, Kind: "invalid"}
 }
 
-// parseLooseURL 容忍缺少 scheme 的输入（"www.bilibili.com/video/BV..."）
-func parseLooseURL(raw string) (*url.URL, bool) {
-	candidate := raw
-	if !strings.Contains(candidate, "://") {
-		candidate = "https://" + candidate
+// prettyLink 把正则匹配到的一小段整理成可解析的 URL。
+//
+// 只接受 http/https：其他 scheme 的直接判否，走不到后面那步，
+// 于是 ftp://bilibili.com/BV... 这类输入仍会被 looksLikeURL 拦下。
+func prettyLink(candidate string) (string, bool) {
+	if strings.Contains(candidate, "://") {
+		if !strings.HasPrefix(strings.ToLower(candidate), "http://") &&
+			!strings.HasPrefix(strings.ToLower(candidate), "https://") {
+			return "", false
+		}
+		return candidate, true
 	}
-	u, err := url.Parse(candidate)
-	if err != nil || u.Host == "" {
-		return nil, false
+	// 裸域名（"www.bilibili.com/video/BV..."）：补上 scheme 再解析
+	return "https://" + candidate, true
+}
+
+// refFromURL 从链接里取标识，只看 path 与 query（域名已由调用方校验）。
+func refFromURL(rawURL string) (BiliRef, bool) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return BiliRef{}, false
 	}
-	return u, true
+
+	pathAndQuery := u.Path
+	if u.RawQuery != "" {
+		pathAndQuery += "?" + u.RawQuery
+	}
+
+	if m := bvRe.FindStringSubmatch(pathAndQuery); m != nil {
+		return BiliRef{Bvid: m[0], Kind: "url-bvid"}, true
+	}
+	if m := bvidQRe.FindStringSubmatch(pathAndQuery); m != nil {
+		return BiliRef{Bvid: firstGroup(m), Kind: "url-bvid"}, true
+	}
+	if m := avRe.FindStringSubmatch(pathAndQuery); m != nil {
+		return BiliRef{Aid: firstGroup(m), Kind: "url-avid"}, true
+	}
+	if m := aidQRe.FindStringSubmatch(pathAndQuery); m != nil {
+		return BiliRef{Aid: firstGroup(m), Kind: "url-avid"}, true
+	}
+	return BiliRef{}, false
 }
 
 // looksLikeURL 判断输入是否"本来就是链接"（而非一段随手粘贴的文本）。
 //
-// 用于区分两种情形：
-//
-//	· 这是一个 URL → 域名必须可信
-//	· 这是一段文字（"看看这个 BV1JHZNBdEQv"）→ 可以宽松提取
+// 只用于一件事：输入里**没能**解析出 B 站标识时，决定这个"不认识的链接"
+// 是被拒绝（不留把任意站点当跳板的余地），还是当普通文字再兜底扫一遍 BV 号。
 //
 // 判定规则刻意保守：只有出现 "://"，或「第一个斜杠之前那一小段像个域名」
 // 才算链接。这样 https://evil.example/watch/BV1... 会被拦住，

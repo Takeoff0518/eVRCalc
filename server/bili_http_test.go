@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -411,12 +412,17 @@ func TestBiliResolveParsesInputs(t *testing.T) {
 		// resolve 会做规范化：av 号同时补出 BV 号，便于前端统一回显
 		{"av116078873153625", "BV1JHZNBdEQv", "116078873153625"},
 		{"https://www.bilibili.com/video/BV1JHZNBdEQv?spm_id_from=333", "BV1JHZNBdEQv", ""},
+		// 线上 404 的那一条：从 B 站 App 复制的「标题 + 空格 + 链接」
+		{"【【洛天依原创】线条与色彩丨致仍手握画笔的你】 https://www.bilibili.com/video/BV1UVtb6PENV/?share_source=copy_web&vd_source=701f14b1944b350b54b777bd57dbd0eb", "BV1UVtb6PENV", ""},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/bili/resolve?q="+c.q, nil))
+		// 前端是 encodeURIComponent 后再拼进 query 的，这里必须照同样的方式编码，
+		// 否则试不出真实链路上的问题（空格 / & 的编码差异会掩盖故障）
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/bili/resolve?q="+url.QueryEscape(c.q), nil))
 		if rec.Code != http.StatusOK {
-			t.Errorf("%s 应返回 200，实际 %d", c.q, rec.Code)
+			t.Errorf("%s 应返回 200，实际 %d（body=%s）", c.q, rec.Code, rec.Body.String())
 			continue
 		}
 		var ref BiliRef
